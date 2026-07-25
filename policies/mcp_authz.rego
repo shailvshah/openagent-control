@@ -1,7 +1,5 @@
 package openagent.authz
 
-import future.keywords.in
-
 default allow := false
 
 # Tool discovery is always allowed.
@@ -11,20 +9,24 @@ allow if {
 
 allow if {
 	input.method == "tools/call"
-	tool := input.params.name
-	granted_tools[input.spiffe_id][_] == tool
-	tool_check(tool, input.params.arguments)
+	granted(input.spiffe_id, input.params.name)
+	tool_check(input.params.name, input.params.arguments)
 }
 
 reason := "Capability not granted for this agent identity" if {
 	input.method == "tools/call"
-	not granted_tools[input.spiffe_id][_] == input.params.name
+	not granted(input.spiffe_id, input.params.name)
 }
 
 reason := "Tool arguments exceed authorized thresholds" if {
 	input.method == "tools/call"
-	granted_tools[input.spiffe_id][_] == input.params.name
+	granted(input.spiffe_id, input.params.name)
 	not tool_check(input.params.name, input.params.arguments)
+}
+
+granted(agent, tool) if {
+	some t in granted_tools[agent]
+	t == tool
 }
 
 granted_tools := {

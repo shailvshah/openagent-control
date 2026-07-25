@@ -27,7 +27,7 @@ async def test_receipts_chain_and_verify() -> None:
     assert first.previous_hash == "0" * 64
     assert second.previous_hash != first.previous_hash
 
-    public_key: Ed25519PublicKey = ledger._private_key.public_key()
+    public_key: Ed25519PublicKey = ledger.public_key()
     unsigned = _canonical_json(first.model_dump(mode="json", exclude={"signature"}))
     public_key.verify(bytes.fromhex(first.signature or ""), unsigned)
 

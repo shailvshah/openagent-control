@@ -81,3 +81,15 @@ curl -X POST http://localhost:8000/mcp/v1 \
   -H "X-Spiffe-ID: spiffe://corp.net/ns/finance/agent/invoice-bot" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_query","arguments":{}}}'
 ```
+
+## Example: a governed LangGraph agent
+
+[examples/langgraph_governed_agent/](examples/langgraph_governed_agent/README.md)
+is a deterministic, zero-API-key demo of a LangGraph agent whose tool calls are
+allowed, denied, and cryptographically receipted by the gateway:
+
+```bash
+poetry install --with examples
+make up
+poetry run python -m examples.langgraph_governed_agent.demo
+```

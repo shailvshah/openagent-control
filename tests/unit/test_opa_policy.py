@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
+from openagent_control.domain.errors import PolicyEngineUnavailableError
 from openagent_control.domain.models import AgentIdentity, Decision, ToolCallRequest
 
 
@@ -50,3 +51,34 @@ async def test_deny_decision_defaults_reason_when_missing() -> None:
     decision = await engine.evaluate(_call())
 
     assert decision.reason == "Denied by policy"
+
+
+@pytest.mark.asyncio
+async def test_unreachable_opa_raises_domain_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    engine = OPAPolicyEngine(opa_url="http://opa.test/v1/data/openagent/authz", client=client)
+
+    with pytest.raises(PolicyEngineUnavailableError):
+        await engine.evaluate(_call())
+
+
+@pytest.mark.asyncio
+async def test_opa_server_error_raises_domain_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    engine = OPAPolicyEngine(opa_url="http://opa.test/v1/data/openagent/authz", client=client)
+
+    with pytest.raises(PolicyEngineUnavailableError):
+        await engine.evaluate(_call())
+
+
+@pytest.mark.asyncio
+async def test_aclose_releases_client() -> None:
+    engine = _engine({"allow": True})
+
+    await engine.aclose()

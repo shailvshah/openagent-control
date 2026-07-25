@@ -8,6 +8,7 @@ this is exposed to anything untrusted.
 
 from __future__ import annotations
 
+from openagent_control.domain.errors import IdentityError
 from openagent_control.domain.models import AgentIdentity
 
 _SPIFFE_HEADER = "x-spiffe-id"
@@ -19,5 +20,5 @@ class HeaderIdentityProvider:
         headers = {k.lower(): v for k, v in raw_headers.items()}
         spiffe_id = headers.get(_SPIFFE_HEADER)
         if not spiffe_id:
-            raise ValueError(f"missing required '{_SPIFFE_HEADER}' header")
+            raise IdentityError(f"missing required '{_SPIFFE_HEADER}' header")
         return AgentIdentity(spiffe_id=spiffe_id, human_sponsor=headers.get(_SPONSOR_HEADER))

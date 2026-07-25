@@ -71,11 +71,50 @@ def test_denied_call_returns_semantic_error_not_forwarded() -> None:
     assert body["error"]["data"]["instruction"] == "Stop execution and request user approval."
 
 
-def test_missing_identity_header_is_rejected() -> None:
+def test_missing_identity_header_returns_401_jsonrpc_error() -> None:
     client = _client(PolicyDecision(decision=Decision.ALLOW))
 
     response = client.post(
         "/mcp/v1", json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
     )
 
-    assert response.status_code == 500
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == -32001
+
+
+def test_delegated_call_without_subject_token_returns_401() -> None:
+    client = _client(PolicyDecision(decision=Decision.ALLOW))
+
+    response = client.post(
+        "/mcp/v1",
+        headers={
+            "X-Spiffe-ID": "spiffe://corp.net/ns/finance/agent/invoice-bot",
+            "X-Human-Sponsor": "alice@corp.net",
+        },
+        json={"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "read_query"}},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == -32003
+
+
+def test_malformed_json_body_returns_parse_error() -> None:
+    client = _client(PolicyDecision(decision=Decision.ALLOW))
+
+    response = client.post(
+        "/mcp/v1",
+        headers={"Content-Type": "application/json"},
+        content="{not json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == -32700
+
+
+def test_non_object_body_returns_invalid_request() -> None:
+    client = _client(PolicyDecision(decision=Decision.ALLOW))
+
+    response = client.post("/mcp/v1", json=[1, 2, 3])
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == -32600

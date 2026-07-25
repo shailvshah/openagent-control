@@ -14,11 +14,10 @@ import json
 import uuid
 from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from openagent_control.domain.models import (
     AgentIdentity,
-    Decision,
     ExecutionReceipt,
     PolicyDecision,
     ToolCallRequest,
@@ -37,6 +36,10 @@ class Ed25519ChainLedger:
         self._previous_hash = _GENESIS_HASH
         self._lock = asyncio.Lock()
 
+    def public_key(self) -> Ed25519PublicKey:
+        """The verification key for receipts signed by this ledger instance."""
+        return self._private_key.public_key()
+
     async def record(
         self, agent: AgentIdentity, request: ToolCallRequest, decision: PolicyDecision
     ) -> ExecutionReceipt:
@@ -46,7 +49,7 @@ class Ed25519ChainLedger:
             receipt = ExecutionReceipt(
                 sequence_id=str(uuid.uuid4()),
                 spiffe_id=agent.spiffe_id,
-                decision=Decision(decision.decision),
+                decision=decision.decision,
                 reason=decision.reason,
                 payload_hash=payload_hash,
                 previous_hash=self._previous_hash,

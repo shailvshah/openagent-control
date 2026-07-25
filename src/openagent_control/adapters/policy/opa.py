@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 
+from openagent_control.domain.errors import PolicyEngineUnavailableError
 from openagent_control.domain.models import Decision, PolicyDecision, ToolCallRequest
 
 
@@ -25,10 +26,16 @@ class OPAPolicyEngine:
                 },
             }
         }
-        response = await self._client.post(self._opa_url, json=opa_input)
-        response.raise_for_status()
+        try:
+            response = await self._client.post(self._opa_url, json=opa_input)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PolicyEngineUnavailableError(str(exc)) from exc
         result = response.json().get("result", {})
 
         decision = Decision.ALLOW if result.get("allow", False) else Decision.DENY
         reason = result.get("reason", "" if decision is Decision.ALLOW else "Denied by policy")
         return PolicyDecision(decision=decision, reason=reason)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()

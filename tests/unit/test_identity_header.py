@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openagent_control.adapters.identity.header import HeaderIdentityProvider
+from openagent_control.domain.errors import IdentityError
 
 
 @pytest.mark.asyncio
@@ -21,8 +22,8 @@ async def test_identify_reads_spiffe_and_sponsor_headers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_identify_raises_without_spiffe_header() -> None:
+async def test_identify_raises_identity_error_without_spiffe_header() -> None:
     provider = HeaderIdentityProvider()
 
-    with pytest.raises(ValueError, match="x-spiffe-id"):
+    with pytest.raises(IdentityError, match="x-spiffe-id"):
         await provider.identify({})
