@@ -1,0 +1,25 @@
+# Master Agent Registry (ADR-0008).
+#
+# Every agent that may call through the gateway MUST have a record here —
+# unregistered SPIFFE IDs are denied and the attempt is receipted in the audit
+# ledger. Register/suspend/re-scope agents via PR to this file.
+
+agents:
+  - spiffe_id: spiffe://corp.net/ns/finance/agent/invoice-bot
+    display_name: Invoice Bot
+    purpose: Read and reconcile finance invoices; propose (never execute) account updates.
+    owner: alice@corp.net
+    risk_tier: medium
+    status: active
+    granted_tools:
+      - read_query
+      - update_record
+
+  - spiffe_id: spiffe://corp.net/ns/sales/agent/lead-qualifier
+    display_name: Lead Qualifier
+    purpose: Enrich and qualify inbound sales leads in Salesforce.
+    owner: bob@corp.net
+    risk_tier: low
+    status: active
+    granted_tools:
+      - salesforce_update_account

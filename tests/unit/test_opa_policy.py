@@ -54,6 +54,37 @@ async def test_deny_decision_defaults_reason_when_missing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_registry_facts_are_included_in_opa_input() -> None:
+    from openagent_control.domain.models import RegisteredAgent, RiskTier
+
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        seen["input"] = json.loads(request.content)["input"]
+        return httpx.Response(200, json={"result": {"allow": True}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    engine = OPAPolicyEngine(opa_url="http://opa.test/v1/data/openagent/authz", client=client)
+    call = _call()
+    call.registration = RegisteredAgent(
+        spiffe_id=call.agent.spiffe_id,
+        display_name="Invoice Bot",
+        purpose="demo",
+        owner="alice@corp.net",
+        risk_tier=RiskTier.MEDIUM,
+        granted_tools=["read_query"],
+    )
+
+    await engine.evaluate(call)
+
+    agent_facts = seen["input"]["agent"]  # type: ignore[index]
+    assert agent_facts["granted_tools"] == ["read_query"]
+    assert agent_facts["status"] == "active"
+
+
+@pytest.mark.asyncio
 async def test_unreachable_opa_raises_domain_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")

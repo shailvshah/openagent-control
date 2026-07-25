@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from openagent_control.adapters.audit_export.stdout import StdoutAuditExporter
 from openagent_control.adapters.identity.header import HeaderIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
+from openagent_control.adapters.registry.file import FileAgentRegistry
 from openagent_control.adapters.token_exchange.stub import StubTokenExchange
 from openagent_control.domain.models import Decision, PolicyDecision, ToolCallRequest
 from openagent_control.gateway.app import create_app
@@ -35,6 +36,7 @@ def _client(decision: PolicyDecision) -> TestClient:
     app = create_app()
     app.state.container = Container(
         identity_provider=HeaderIdentityProvider(),
+        agent_registry=FileAgentRegistry("registry/agents.yaml"),
         policy_engine=_FixedPolicyEngine(decision),
         ledger=Ed25519ChainLedger(),
         audit_exporter=StdoutAuditExporter(),

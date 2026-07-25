@@ -22,15 +22,18 @@ from typing import Any
 from openagent_control.domain.errors import (
     MissingSubjectTokenError,
     PolicyEngineUnavailableError,
+    TokenExchangeError,
     UpstreamError,
 )
 from openagent_control.domain.models import (
     AgentIdentity,
+    AgentStatus,
     Decision,
     PolicyDecision,
     ToolCallRequest,
 )
 from openagent_control.domain.ports import (
+    AgentRegistry,
     AuditExporter,
     IdentityProvider,
     Ledger,
@@ -50,6 +53,7 @@ class GovernedExecutionService:
         self,
         *,
         identity_provider: IdentityProvider,
+        agent_registry: AgentRegistry,
         policy_engine: PolicyEngine,
         ledger: Ledger,
         audit_exporter: AuditExporter,
@@ -58,6 +62,7 @@ class GovernedExecutionService:
         delegated_audience: str,
     ) -> None:
         self._identity_provider = identity_provider
+        self._agent_registry = agent_registry
         self._policy_engine = policy_engine
         self._ledger = ledger
         self._audit_exporter = audit_exporter
@@ -72,6 +77,7 @@ class GovernedExecutionService:
         to map to its own auth failure shape.
         """
         agent = await self._identity_provider.identify(headers)
+        registration = await self._agent_registry.lookup(agent.spiffe_id)
 
         params = payload.get("params") or {}
         call = ToolCallRequest(
@@ -79,13 +85,27 @@ class GovernedExecutionService:
             tool_name=params.get("name"),
             arguments=params.get("arguments", {}),
             agent=agent,
+            registration=registration,
             request_id=payload.get("id"),
         )
 
-        try:
-            decision = await self._policy_engine.evaluate(call)
-        except PolicyEngineUnavailableError:
-            decision = PolicyDecision(decision=Decision.DENY, reason=_FAIL_CLOSED_REASON)
+        # Registry gate (ADR-0008): orphaned or suspended agents never reach the
+        # policy engine, but the attempt is still receipted below.
+        if registration is None:
+            decision = PolicyDecision(
+                decision=Decision.DENY,
+                reason="Agent not registered in the Agent Registry (orphaned agents are refused)",
+            )
+        elif registration.status is not AgentStatus.ACTIVE:
+            decision = PolicyDecision(
+                decision=Decision.DENY,
+                reason=f"Agent is {registration.status.value} in the Agent Registry",
+            )
+        else:
+            try:
+                decision = await self._policy_engine.evaluate(call)
+            except PolicyEngineUnavailableError:
+                decision = PolicyDecision(decision=Decision.DENY, reason=_FAIL_CLOSED_REASON)
 
         receipt = await self._ledger.record(agent, call, decision)
         await self._audit_exporter.export(receipt)
@@ -98,7 +118,15 @@ class GovernedExecutionService:
                 instruction=_STOP_INSTRUCTION,
             )
 
-        credential = await self._broker_credential(agent, headers)
+        try:
+            credential = await self._broker_credential(agent, headers)
+        except TokenExchangeError as exc:
+            return _jsonrpc_error(
+                call.request_id,
+                code=-32004,
+                message=f"Credential brokering failed: {exc}",
+                instruction="Do not retry automatically; report the failure to the user.",
+            )
 
         try:
             return await self._mcp_upstream.forward(call, credential)

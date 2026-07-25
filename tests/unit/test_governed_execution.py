@@ -12,12 +12,16 @@ from openagent_control.application.governed_execution import GovernedExecutionSe
 from openagent_control.domain.errors import (
     MissingSubjectTokenError,
     PolicyEngineUnavailableError,
+    TokenExchangeError,
     UpstreamError,
 )
 from openagent_control.domain.models import (
+    AgentStatus,
     Decision,
     ExecutionReceipt,
     PolicyDecision,
+    RegisteredAgent,
+    RiskTier,
     ToolCallRequest,
 )
 
@@ -63,23 +67,51 @@ class FakeUpstream:
 
 
 class FakeTokenExchange:
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+
     async def exchange(self, subject_token: str, audience: str) -> str:
+        if self._error:
+            raise self._error
         return f"obo::{subject_token}::{audience}"
+
+
+def _registered(status: AgentStatus = AgentStatus.ACTIVE) -> RegisteredAgent:
+    return RegisteredAgent(
+        spiffe_id=_AGENT,
+        display_name="Invoice Bot",
+        purpose="demo",
+        owner="alice@corp.net",
+        risk_tier=RiskTier.MEDIUM,
+        status=status,
+        granted_tools=["read_query"],
+    )
+
+
+class FakeRegistry:
+    def __init__(self, agents: dict[str, RegisteredAgent] | None = None) -> None:
+        self._agents = agents if agents is not None else {_AGENT: _registered()}
+
+    async def lookup(self, spiffe_id: str) -> RegisteredAgent | None:
+        return self._agents.get(spiffe_id)
 
 
 def _service(
     policy: FakePolicyEngine,
     upstream: FakeUpstream | None = None,
     exporter: RecordingExporter | None = None,
+    registry: FakeRegistry | None = None,
+    token_exchange: FakeTokenExchange | None = None,
 ) -> tuple[GovernedExecutionService, FakeUpstream, RecordingExporter]:
     upstream = upstream or FakeUpstream()
     exporter = exporter or RecordingExporter()
     service = GovernedExecutionService(
         identity_provider=HeaderIdentityProvider(),
+        agent_registry=registry or FakeRegistry(),
         policy_engine=policy,
         ledger=Ed25519ChainLedger(),
         audit_exporter=exporter,
-        token_exchange=FakeTokenExchange(),
+        token_exchange=token_exchange or FakeTokenExchange(),
         mcp_upstream=upstream,
         delegated_audience="test-audience",
     )
@@ -148,6 +180,53 @@ async def test_denied_call_returns_stop_instruction() -> None:
     result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
 
     assert result["error"]["data"]["instruction"] == "Stop execution and request user approval."
+
+
+@pytest.mark.asyncio
+async def test_unregistered_agent_is_denied_and_receipted() -> None:
+    service, upstream, exporter = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        registry=FakeRegistry(agents={}),
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert "not registered" in result["error"]["message"]
+    assert upstream.credentials == []
+    assert exporter.receipts[0].decision is Decision.DENY
+    assert "not registered" in exporter.receipts[0].reason
+
+
+@pytest.mark.asyncio
+async def test_suspended_agent_is_denied_and_receipted() -> None:
+    service, upstream, exporter = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        registry=FakeRegistry(agents={_AGENT: _registered(status=AgentStatus.SUSPENDED)}),
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert "suspended" in result["error"]["message"]
+    assert upstream.credentials == []
+    assert exporter.receipts[0].decision is Decision.DENY
+
+
+@pytest.mark.asyncio
+async def test_token_exchange_failure_returns_semantic_error() -> None:
+    service, upstream, _ = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        token_exchange=FakeTokenExchange(error=TokenExchangeError("IdP said no")),
+    )
+
+    headers = {
+        "x-spiffe-id": _AGENT,
+        "x-human-sponsor": "alice@corp.net",
+        "x-subject-token": "alice-oidc-token",
+    }
+    result = await service.execute(headers, _PAYLOAD)
+
+    assert result["error"]["code"] == -32004
+    assert upstream.credentials == []
 
 
 @pytest.mark.asyncio

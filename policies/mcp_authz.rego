@@ -1,3 +1,9 @@
+# Authorization logic for governed tool calls.
+#
+# Agent facts (who exists, status, granted tools) come from the Agent Registry
+# via input.agent (ADR-0008) — this file holds only the logic. Registering or
+# re-scoping an agent is a registry/agents.yaml change, not a policy change.
+
 package openagent.authz
 
 default allow := false
@@ -9,30 +15,28 @@ allow if {
 
 allow if {
 	input.method == "tools/call"
-	granted(input.spiffe_id, input.params.name)
+	input.agent.status == "active"
+	granted(input.params.name)
 	tool_check(input.params.name, input.params.arguments)
 }
 
 reason := "Capability not granted for this agent identity" if {
 	input.method == "tools/call"
-	not granted(input.spiffe_id, input.params.name)
+	not granted(input.params.name)
 }
 
 reason := "Tool arguments exceed authorized thresholds" if {
 	input.method == "tools/call"
-	granted(input.spiffe_id, input.params.name)
+	granted(input.params.name)
 	not tool_check(input.params.name, input.params.arguments)
 }
 
-granted(agent, tool) if {
-	some t in granted_tools[agent]
+granted(tool) if {
+	some t in input.agent.granted_tools
 	t == tool
 }
 
-granted_tools := {
-	"spiffe://corp.net/ns/finance/agent/invoice-bot": ["read_query", "update_record"],
-	"spiffe://corp.net/ns/sales/agent/lead-qualifier": ["salesforce_update_account"],
-}
+# --- Argument-level guardrails (authorization logic, stays in policy) ---
 
 tool_check("salesforce_update_account", args) if {
 	args.credit_limit <= 10000

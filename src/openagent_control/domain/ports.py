@@ -15,6 +15,7 @@ from openagent_control.domain.models import (
     AgentIdentity,
     ExecutionReceipt,
     PolicyDecision,
+    RegisteredAgent,
     ToolCallRequest,
 )
 
@@ -38,6 +39,17 @@ class IdentityProvider(Protocol):
     """
 
     async def identify(self, raw_headers: dict[str, str]) -> AgentIdentity: ...
+
+
+@runtime_checkable
+class AgentRegistry(Protocol):
+    """Source of truth for agent facts (ownership, status, granted tools).
+
+    See ADR-0008. Returns None for unknown SPIFFE IDs — the caller decides how
+    to treat orphans (the gateway denies and receipts them).
+    """
+
+    async def lookup(self, spiffe_id: str) -> RegisteredAgent | None: ...
 
 
 @runtime_checkable

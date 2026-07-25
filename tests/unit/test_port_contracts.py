@@ -14,8 +14,12 @@ from openagent_control.adapters.identity.header import HeaderIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
 from openagent_control.adapters.mcp_upstream.http import HttpMCPUpstream
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
+from openagent_control.adapters.registry.file import FileAgentRegistry
+from openagent_control.adapters.token_exchange.entra_obo import EntraOnBehalfOfTokenExchange
+from openagent_control.adapters.token_exchange.rfc8693 import Rfc8693TokenExchange
 from openagent_control.adapters.token_exchange.stub import StubTokenExchange
 from openagent_control.domain.ports import (
+    AgentRegistry,
     AuditExporter,
     IdentityProvider,
     Ledger,
@@ -32,6 +36,9 @@ from openagent_control.domain.ports import (
         (HeaderIdentityProvider(), IdentityProvider),
         (Ed25519ChainLedger(), Ledger),
         (StubTokenExchange(), TokenExchange),
+        (Rfc8693TokenExchange("http://idp.test", "id", "secret"), TokenExchange),
+        (EntraOnBehalfOfTokenExchange("http://idp.test", "id", "secret"), TokenExchange),
+        (FileAgentRegistry("registry/agents.yaml"), AgentRegistry),
         (HttpMCPUpstream(upstream_url="http://upstream.test"), MCPUpstream),
         (StdoutAuditExporter(), AuditExporter),
     ],

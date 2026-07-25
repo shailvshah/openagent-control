@@ -20,6 +20,35 @@ class AgentIdentity(BaseModel):
     """OIDC subject of the human this agent is acting on behalf of, if any."""
 
 
+class AgentStatus(str, Enum):
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+
+
+class RiskTier(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class RegisteredAgent(BaseModel):
+    """An agent's registry record: the facts the enterprise holds about it.
+
+    Per ADR-0008 this — not policy code — is the source of truth for what an
+    agent is, who owns it, and which tools it has been granted. `owner` is the
+    human accountable for the agent's existence; the per-request `human_sponsor`
+    on AgentIdentity is who it acts for right now.
+    """
+
+    spiffe_id: str
+    display_name: str
+    purpose: str
+    owner: str
+    risk_tier: RiskTier
+    status: AgentStatus = AgentStatus.ACTIVE
+    granted_tools: list[str] = Field(default_factory=list)
+
+
 class ToolCallRequest(BaseModel):
     """A single MCP-shaped tool invocation attempt, per ADR-0004."""
 
@@ -28,6 +57,9 @@ class ToolCallRequest(BaseModel):
     tool_name: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
     agent: AgentIdentity
+    registration: RegisteredAgent | None = None
+    """The agent's registry record, attached by the gateway before policy
+    evaluation so the policy engine reasons over registry facts (ADR-0008)."""
     request_id: str | int | None = None
 
 

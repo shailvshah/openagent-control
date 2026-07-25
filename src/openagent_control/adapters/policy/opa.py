@@ -20,6 +20,11 @@ class OPAPolicyEngine:
             "input": {
                 "method": request.method,
                 "spiffe_id": request.agent.spiffe_id,
+                # Registry facts (ADR-0008): policy logic evaluates against these
+                # instead of data hardcoded in the Rego file.
+                "agent": (
+                    request.registration.model_dump(mode="json") if request.registration else None
+                ),
                 "params": {
                     "name": request.tool_name,
                     "arguments": request.arguments,

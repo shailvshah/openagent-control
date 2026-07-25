@@ -23,5 +23,9 @@ class PolicyEngineUnavailableError(GovernanceError):
     """The policy engine could not be reached; callers must fail closed."""
 
 
+class TokenExchangeError(GovernanceError):
+    """The identity provider refused or failed the RFC 8693 / OBO exchange."""
+
+
 class UpstreamError(GovernanceError):
     """The downstream MCP server rejected or failed the forwarded call."""

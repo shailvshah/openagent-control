@@ -39,6 +39,7 @@ def test_container_aclose_tolerates_adapters_without_aclose() -> None:
     from openagent_control.adapters.audit_export.stdout import StdoutAuditExporter
     from openagent_control.adapters.identity.header import HeaderIdentityProvider
     from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
+    from openagent_control.adapters.registry.file import FileAgentRegistry
     from openagent_control.adapters.token_exchange.stub import StubTokenExchange
     from openagent_control.domain.models import PolicyDecision, ToolCallRequest
     from openagent_control.gateway.dependencies import Container
@@ -52,6 +53,7 @@ def test_container_aclose_tolerates_adapters_without_aclose() -> None:
 
     container = Container(
         identity_provider=HeaderIdentityProvider(),
+        agent_registry=FileAgentRegistry("registry/agents.yaml"),
         policy_engine=_Bare(),
         ledger=Ed25519ChainLedger(),
         audit_exporter=StdoutAuditExporter(),

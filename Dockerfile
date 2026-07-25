@@ -9,6 +9,7 @@ COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-root --only main
 
 COPY src ./src
+COPY registry ./registry
 RUN poetry install --only main
 
 EXPOSE 8000

@@ -17,9 +17,11 @@ no cryptographically trustworthy record of what an agent actually did.
 3. **Audit** — every decision produces an Ed25519-signed, hash-chained receipt, so a
    compliance reviewer can prove after the fact what was authorized and executed.
 
-See [docs/design.md](docs/design.md) for the full design and
+See [docs/design.md](docs/design.md) for the full design,
 [docs/adr/](docs/adr/README.md) for the reasoning behind each decision — including
-what's a real implementation today versus a deliberate v1 stub.
+what's a real implementation today versus a deliberate v1 stub — and
+[docs/roadmap.md](docs/roadmap.md) for where the codebase stands against the
+phased enterprise rollout plan.
 
 ## Status
 
