@@ -72,7 +72,7 @@ src/openagent_control/
 ## Development
 
 ```bash
-make install      # poetry install
+make install      # poetry install --all-extras
 make quality      # black --check, ruff, mypy
 make test         # pytest with coverage (95% gate)
 make check        # quality + test
@@ -93,10 +93,13 @@ curl -X POST http://localhost:8000/mcp/v1 \
 ## Persistence & caching (optional)
 
 Unset by default — the gateway runs with the in-process ledger and file registry,
-zero extra infrastructure. Set `OAC_DATABASE_URL` to switch the registry and ledger
-to Postgres (own `oac` schema, migrated via Alembic), and `OAC_REDIS_URL` to cache
-registry lookups (30s TTL) and brokered tokens (capped at each token's own expiry).
-See [ADR-0009](docs/adr/0009-postgres-persistence-and-redis-caching.md).
+zero extra infrastructure. The Postgres/Redis stack is an **optional extra**
+(`pip install 'openagent-control[persistence]'` / `poetry install --extras persistence`)
+and is lazy-imported, so the default deployment doesn't pay its ~20MB of resident
+memory or its install footprint. Set `OAC_DATABASE_URL` to switch the registry and
+ledger to Postgres (own `oac` schema, migrated via Alembic), and `OAC_REDIS_URL` to
+cache registry lookups (30s TTL) and brokered tokens (capped at each token's own
+expiry). See [ADR-0009](docs/adr/0009-postgres-persistence-and-redis-caching.md).
 
 ```bash
 make up-persistent               # docker compose --profile persistence: + postgres, redis

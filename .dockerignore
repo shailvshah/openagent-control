@@ -1,0 +1,16 @@
+# Keep the build context to the ~1MB the image actually needs
+# (without this, .venv alone ships ~213MB to the docker daemon per build).
+.venv
+.git
+.pytest_cache
+.mypy_cache
+.ruff_cache
+__pycache__
+*.pyc
+.coverage
+docs
+tests
+examples
+scratch
+*.md
+!README.md

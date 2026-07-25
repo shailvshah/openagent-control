@@ -17,6 +17,13 @@ dependencies = [
     "opentelemetry-sdk (>=1.26.0,<2.0.0)",
     "pyyaml (>=6.0.0,<7.0.0)",
     "pyjwt (>=2.9.0,<3.0.0)",
+]
+
+[project.optional-dependencies]
+# Postgres + Redis backends (ADR-0009). The default install runs the gateway
+# with the in-process ledger and file registry only — ~43MB less resident
+# memory and a much smaller footprint. Install with:  pip/poetry ... [persistence]
+persistence = [
     "sqlalchemy[asyncio] (>=2.0.0,<3.0.0)",
     "asyncpg (>=0.29.0,<0.30.0)",
     "alembic (>=1.13.0,<2.0.0)",

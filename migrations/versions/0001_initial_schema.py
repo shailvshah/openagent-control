@@ -41,6 +41,9 @@ def upgrade() -> None:
     op.create_table(
         "execution_receipts",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        # unique=True already gives sequence_id a unique index in Postgres; a
+        # separate op.create_index on the same column would be a second,
+        # redundant index paying write amplification on every receipt insert.
         sa.Column("sequence_id", sa.String(), nullable=False, unique=True),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("spiffe_id", sa.String(), nullable=False),
@@ -49,12 +52,6 @@ def upgrade() -> None:
         sa.Column("payload_hash", sa.String(), nullable=False),
         sa.Column("previous_hash", sa.String(), nullable=False),
         sa.Column("signature", sa.String(), nullable=False),
-        schema=SCHEMA,
-    )
-    op.create_index(
-        "ix_execution_receipts_sequence_id",
-        "execution_receipts",
-        ["sequence_id"],
         schema=SCHEMA,
     )
     op.create_index(
@@ -81,8 +78,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("chain_state", schema=SCHEMA)
     op.drop_index("ix_execution_receipts_spiffe_id", table_name="execution_receipts", schema=SCHEMA)
-    op.drop_index(
-        "ix_execution_receipts_sequence_id", table_name="execution_receipts", schema=SCHEMA
-    )
     op.drop_table("execution_receipts", schema=SCHEMA)
     op.drop_table("agents", schema=SCHEMA)

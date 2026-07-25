@@ -1,7 +1,7 @@
 .PHONY: install fmt fmt-check lint typecheck quality test check up down up-persistent db-upgrade db-downgrade
 
 install:
-	poetry install
+	poetry install --all-extras
 
 fmt:
 	poetry run black src tests

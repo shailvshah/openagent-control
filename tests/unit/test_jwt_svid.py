@@ -60,6 +60,24 @@ async def test_valid_svid_yields_identity_and_sponsor(
     assert agent.human_sponsor == "alice@corp.net"
 
 
+def test_unsupported_key_type_fails_at_startup(tmp_path: Path) -> None:
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+    pem = (
+        X25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    key_path = tmp_path / "bad-bundle.pem"
+    key_path.write_bytes(pem)
+
+    with pytest.raises(ValueError, match="unsupported trust-bundle key type"):
+        JwtSvidIdentityProvider(public_key_path=key_path, audience=_AUDIENCE)
+
+
 @pytest.mark.asyncio
 async def test_missing_bearer_header_is_rejected(provider: JwtSvidIdentityProvider) -> None:
     with pytest.raises(IdentityError, match="Bearer"):

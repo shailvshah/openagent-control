@@ -47,7 +47,7 @@ class ReceiptRow(Base):
     __tablename__ = "execution_receipts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sequence_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    sequence_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     timestamp: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     spiffe_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     decision: Mapped[str] = mapped_column(String, nullable=False)

@@ -9,24 +9,17 @@ settings consumed here, and nothing else.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, NoReturn
 
-import redis.asyncio as redis_asyncio
 from fastapi import Request
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from openagent_control.adapters.audit_export.stdout import StdoutAuditExporter
-from openagent_control.adapters.db.session import make_engine, make_session_factory
 from openagent_control.adapters.identity.header import HeaderIdentityProvider
 from openagent_control.adapters.identity.jwt_svid import JwtSvidIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
-from openagent_control.adapters.ledger.postgres import PostgresLedger
-from openagent_control.adapters.ledger.signing import ReceiptSigner
 from openagent_control.adapters.mcp_upstream.http import HttpMCPUpstream
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
-from openagent_control.adapters.registry.caching import CachingAgentRegistry
 from openagent_control.adapters.registry.file import FileAgentRegistry
-from openagent_control.adapters.registry.postgres import PostgresAgentRegistry
-from openagent_control.adapters.token_exchange.caching import CachingTokenExchange
 from openagent_control.adapters.token_exchange.entra_obo import EntraOnBehalfOfTokenExchange
 from openagent_control.adapters.token_exchange.rfc8693 import Rfc8693TokenExchange
 from openagent_control.adapters.token_exchange.stub import StubTokenExchange
@@ -42,6 +35,10 @@ from openagent_control.domain.ports import (
     TokenExchange,
 )
 
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
 
 @dataclass
 class Container:
@@ -56,7 +53,7 @@ class Container:
     mcp_upstream: MCPUpstream
     delegated_audience: str = "openagent-control-mcp-upstream"
     db_engine: AsyncEngine | None = None
-    redis_client: redis_asyncio.Redis | None = None
+    redis_client: Redis | None = None
     governed_execution: GovernedExecutionService = field(init=False)
 
     def __post_init__(self) -> None:
@@ -108,9 +105,28 @@ def _token_exchange(settings: Settings) -> TokenExchange:
     return StubTokenExchange()
 
 
+def _require_persistence(feature: str) -> NoReturn:
+    """Raises a clear startup error if the optional persistence extra is missing."""
+    raise RuntimeError(
+        f"{feature} is configured but the persistence dependencies are not "
+        "installed — install with: pip install 'openagent-control[persistence]' "
+        "(or poetry install --extras persistence)"
+    )
+
+
 def build_container(settings: Settings) -> Container:
+    # The Postgres/Redis stack is imported lazily inside these branches: eager
+    # imports cost ~43MB RSS and ~150ms startup even when persistence is unused
+    # (measured; see ADR-0009).
     db_engine: AsyncEngine | None = None
     if settings.database_url:
+        try:
+            from openagent_control.adapters.db.session import make_engine, make_session_factory
+            from openagent_control.adapters.ledger.postgres import PostgresLedger
+            from openagent_control.adapters.ledger.signing import ReceiptSigner
+            from openagent_control.adapters.registry.postgres import PostgresAgentRegistry
+        except ImportError:
+            _require_persistence("OAC_DATABASE_URL")
         db_engine = make_engine(settings.database_url)
         session_factory = make_session_factory(db_engine)
         agent_registry: AgentRegistry = PostgresAgentRegistry(session_factory)
@@ -121,9 +137,18 @@ def build_container(settings: Settings) -> Container:
 
     token_exchange = _token_exchange(settings)
 
-    redis_client: redis_asyncio.Redis | None = None
+    redis_client: Redis | None = None
     if settings.redis_url:
-        redis_client = redis_asyncio.Redis.from_url(settings.redis_url)
+        try:
+            from redis.asyncio import Redis as RedisClient
+
+            from openagent_control.adapters.registry.caching import CachingAgentRegistry
+            from openagent_control.adapters.token_exchange.caching import CachingTokenExchange
+        except ImportError:
+            _require_persistence("OAC_REDIS_URL")
+        # decode_responses=True so cached tokens/JSON come back as str, matching
+        # what the caching adapters and pydantic expect.
+        redis_client = RedisClient.from_url(settings.redis_url, decode_responses=True)
         agent_registry = CachingAgentRegistry(
             agent_registry, redis_client, settings.registry_cache_ttl_seconds
         )

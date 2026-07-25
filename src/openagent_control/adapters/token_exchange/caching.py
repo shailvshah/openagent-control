@@ -54,7 +54,10 @@ class CachingTokenExchange:
         key = _cache_key(subject_token, audience)
         cached = await self._redis.get(key)
         if cached is not None:
-            return str(cached)
+            # A client without decode_responses=True hands back bytes; str() on
+            # bytes would corrupt the credential into "b'...'", so decode
+            # explicitly instead of coercing.
+            return cached.decode() if isinstance(cached, bytes) else str(cached)
 
         token = await self._inner.exchange(subject_token, audience)
         ttl = _ttl_from_token(token, self._max_ttl_seconds, self._safety_margin_seconds)

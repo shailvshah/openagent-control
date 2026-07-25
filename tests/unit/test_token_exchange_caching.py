@@ -61,6 +61,24 @@ async def test_cache_miss_calls_inner_and_ttl_derives_from_exp() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bytes_cache_hit_is_decoded_not_corrupted() -> None:
+    """Regression: a Redis client without decode_responses=True returns bytes;
+    str(b"tok") would corrupt the credential into "b'tok'"."""
+    redis = FakeRedis()
+    token = _jwt(expires_in=300)
+    inner = CountingTokenExchange(token)
+    cache = CachingTokenExchange(
+        inner, redis, max_ttl_seconds=600, safety_margin_seconds=30  # type: ignore[arg-type]
+    )
+
+    await cache.exchange("subject-tok", "aud")
+    ((key, value),) = redis.store.items()
+    redis.store[key] = value.encode()  # type: ignore[assignment]
+
+    assert await cache.exchange("subject-tok", "aud") == token
+
+
+@pytest.mark.asyncio
 async def test_cache_hit_skips_inner() -> None:
     redis = FakeRedis()
     inner = CountingTokenExchange(_jwt(expires_in=300))

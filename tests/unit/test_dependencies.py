@@ -48,6 +48,30 @@ def test_redis_url_wraps_registry_and_token_exchange_with_caching() -> None:
     assert isinstance(container.agent_registry, CachingAgentRegistry)
     assert isinstance(container.token_exchange, CachingTokenExchange)
     assert container.redis_client is not None
+    kwargs = container.redis_client.connection_pool.connection_kwargs
+    assert kwargs.get("decode_responses") is True
+
+
+def test_database_url_without_persistence_extra_fails_clearly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "openagent_control.adapters.db.session", None)
+
+    with pytest.raises(RuntimeError, match="persistence"):
+        build_container(Settings(database_url="sqlite+aiosqlite:///:memory:"))
+
+
+def test_redis_url_without_persistence_extra_fails_clearly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "openagent_control.adapters.registry.caching", None)
+
+    with pytest.raises(RuntimeError, match="persistence"):
+        build_container(Settings(redis_url="redis://localhost:6379/0"))
 
 
 @pytest.mark.asyncio
