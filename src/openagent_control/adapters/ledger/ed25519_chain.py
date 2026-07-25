@@ -1,6 +1,7 @@
-"""Ed25519 hash-chained ledger adapter. See docs/adr/0003-ed25519-hash-chained-audit-ledger.md.
+"""In-memory Ed25519 hash-chained ledger adapter. See docs/adr/0003.
 
-Known v1 limitations (tracked in the ADR, not solved here):
+Known v1 limitations (tracked in the ADR, not solved here — PostgresLedger in
+adapters/ledger/postgres.py addresses both per ADR-0009):
 - the signing key is generated in-process and lost on restart;
 - chain state (`_previous_hash`) lives in a single process's memory, so this does
   not scale to multiple replicas without a shared, race-safe store.
@@ -10,12 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import uuid
-from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
+from openagent_control.adapters.ledger.signing import GENESIS_HASH, ReceiptSigner, canonical_json
 from openagent_control.domain.models import (
     AgentIdentity,
     ExecutionReceipt,
@@ -23,27 +23,21 @@ from openagent_control.domain.models import (
     ToolCallRequest,
 )
 
-_GENESIS_HASH = "0" * 64
-
-
-def _canonical_json(data: dict[str, Any]) -> bytes:
-    return json.dumps(data, sort_keys=True, default=str).encode("utf-8")
-
 
 class Ed25519ChainLedger:
     def __init__(self, private_key: Ed25519PrivateKey | None = None) -> None:
-        self._private_key = private_key or Ed25519PrivateKey.generate()
-        self._previous_hash = _GENESIS_HASH
+        self._signer = ReceiptSigner(private_key)
+        self._previous_hash = GENESIS_HASH
         self._lock = asyncio.Lock()
 
     def public_key(self) -> Ed25519PublicKey:
         """The verification key for receipts signed by this ledger instance."""
-        return self._private_key.public_key()
+        return self._signer.public_key()
 
     async def record(
         self, agent: AgentIdentity, request: ToolCallRequest, decision: PolicyDecision
     ) -> ExecutionReceipt:
-        payload_hash = hashlib.sha256(_canonical_json(request.model_dump(mode="json"))).hexdigest()
+        payload_hash = hashlib.sha256(canonical_json(request.model_dump(mode="json"))).hexdigest()
 
         async with self._lock:
             receipt = ExecutionReceipt(
@@ -54,8 +48,8 @@ class Ed25519ChainLedger:
                 payload_hash=payload_hash,
                 previous_hash=self._previous_hash,
             )
-            unsigned_bytes = _canonical_json(receipt.model_dump(mode="json", exclude={"signature"}))
-            signature = self._private_key.sign(unsigned_bytes)
+            unsigned_bytes = canonical_json(receipt.model_dump(mode="json", exclude={"signature"}))
+            signature = self._signer.sign(unsigned_bytes)
             receipt.signature = signature.hex()
 
             self._previous_hash = hashlib.sha256(unsigned_bytes + signature).hexdigest()

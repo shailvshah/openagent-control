@@ -7,6 +7,11 @@ services:
     environment:
       - OAC_OPA_URL=http://opa:8181/v1/data/openagent/authz
       - OAC_MCP_UPSTREAM_URL=http://mcp-server:5678
+      # Empty by default (in-memory ledger + file registry, ADR-0003/0008).
+      # Set on the host and run with --profile persistence to opt into
+      # Postgres + Redis (ADR-0009):
+      - OAC_DATABASE_URL=${OAC_DATABASE_URL:-}
+      - OAC_REDIS_URL=${OAC_REDIS_URL:-}
     depends_on:
       - opa
       - mcp-server
@@ -24,3 +29,22 @@ services:
     command: ["-text={\"jsonrpc\": \"2.0\", \"result\": \"mocked_backend_response\"}"]
     ports:
       - "8080:5678"
+
+  # Optional persistence layer (ADR-0009). Not started by plain `docker compose
+  # up`; requires `--profile persistence` and OAC_DATABASE_URL/OAC_REDIS_URL set
+  # to point the gateway at these (see README).
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["persistence"]
+    environment:
+      - POSTGRES_USER=oac
+      - POSTGRES_PASSWORD=oac
+      - POSTGRES_DB=oac
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["persistence"]
+    ports:
+      - "6379:6379"

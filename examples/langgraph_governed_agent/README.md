@@ -29,6 +29,19 @@ docker compose logs gateway | grep audit_receipt   # the signed evidence
 
 `OAC_GATEWAY_URL` overrides the gateway address if it isn't on `localhost:8000`.
 
+The demo agent talks to the gateway over plain HTTP, so it does not know or care
+whether the gateway is backed by the in-process ledger/file registry or by Postgres
++ Redis (ADR-0009) — same output either way. To prove that end-to-end against real
+persistence instead of `make up`:
+
+```bash
+make up-persistent             # + postgres, redis; set OAC_DATABASE_URL/OAC_REDIS_URL
+make db-upgrade                # alembic upgrade head
+# seed the demo agent into oac.agents (see registry/agents.yaml for the fields),
+# then run the demo exactly as above — identical conversation, receipts land in
+# oac.execution_receipts instead of only the gateway's stdout log.
+```
+
 ## Files
 
 - `demo.py` — builds the agent and prints the governed conversation

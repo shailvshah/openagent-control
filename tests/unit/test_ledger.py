@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger, _canonical_json
+from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
+from openagent_control.adapters.ledger.signing import canonical_json
 from openagent_control.domain.models import AgentIdentity, Decision, PolicyDecision, ToolCallRequest
 
 
@@ -28,7 +29,7 @@ async def test_receipts_chain_and_verify() -> None:
     assert second.previous_hash != first.previous_hash
 
     public_key: Ed25519PublicKey = ledger.public_key()
-    unsigned = _canonical_json(first.model_dump(mode="json", exclude={"signature"}))
+    unsigned = canonical_json(first.model_dump(mode="json", exclude={"signature"}))
     public_key.verify(bytes.fromhex(first.signature or ""), unsigned)
 
 

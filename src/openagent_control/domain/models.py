@@ -47,6 +47,12 @@ class RegisteredAgent(BaseModel):
     risk_tier: RiskTier
     status: AgentStatus = AgentStatus.ACTIVE
     granted_tools: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    status_changed_at: datetime | None = None
+    """When `status` last changed — e.g. when an agent was suspended. Distinct
+    from `updated_at` (any field change) so compliance reporting and a future
+    kill-switch feature can answer "when was this agent revoked" precisely."""
 
 
 class ToolCallRequest(BaseModel):

@@ -57,6 +57,14 @@ async def test_lookup_unknown_agent_returns_none(registry: FileAgentRegistry) ->
 
 
 @pytest.mark.asyncio
+async def test_second_lookup_reuses_cached_parse(registry: FileAgentRegistry) -> None:
+    first = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
+    second = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
+
+    assert first == second
+
+
+@pytest.mark.asyncio
 async def test_empty_file_yields_no_agents(tmp_path: Path) -> None:
     path = tmp_path / "empty.yaml"
     path.write_text("")

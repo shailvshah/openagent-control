@@ -17,6 +17,11 @@ dependencies = [
     "opentelemetry-sdk (>=1.26.0,<2.0.0)",
     "pyyaml (>=6.0.0,<7.0.0)",
     "pyjwt (>=2.9.0,<3.0.0)",
+    "sqlalchemy[asyncio] (>=2.0.0,<3.0.0)",
+    "asyncpg (>=0.29.0,<0.30.0)",
+    "alembic (>=1.13.0,<2.0.0)",
+    "redis (>=5.0.0,<6.0.0)",
+    "greenlet (>=3.0.0,<4.0.0)",
 ]
 
 [tool.poetry]
@@ -37,6 +42,7 @@ ruff = "^0.6.0"
 mypy = "^1.11.0"
 black = "^24.8.0"
 types-pyyaml = "^6.0.12.20260724"
+aiosqlite = "^0.20.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

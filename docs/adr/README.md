@@ -10,3 +10,4 @@
 | [0006](0006-hexagonal-architecture-for-the-control-plane.md) | Hexagonal (ports & adapters) architecture, incl. integration-support ports |
 | [0007](0007-decentralized-identity-is-a-future-extension-not-v1-scope.md) | Decentralized identity (DIDs/VCs) is a future extension, not v1 scope |
 | [0008](0008-agent-registry-as-source-of-truth.md) | Agent Registry as the source of truth for agent facts |
+| [0009](0009-postgres-persistence-and-redis-caching.md) | Postgres persistence for the ledger and registry, Redis caching |

@@ -29,3 +29,15 @@ class Settings(BaseSettings):
     token_exchange_url: str = ""
     token_exchange_client_id: str = ""
     token_exchange_client_secret: str = ""
+
+    database_url: str = ""
+    """Async SQLAlchemy URL (e.g. postgresql+asyncpg://user:pass@host/db). Empty =
+    use the in-process ledger (ADR-0003) and file registry (ADR-0008) instead of
+    Postgres (ADR-0009)."""
+
+    redis_url: str = ""
+    """Empty = caching disabled; registry lookups and token exchange call
+    straight through to their adapter on every request (ADR-0009)."""
+    registry_cache_ttl_seconds: int = 30
+    token_cache_max_ttl_seconds: int = 300
+    token_cache_safety_margin_seconds: int = 30
