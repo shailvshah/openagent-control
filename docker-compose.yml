@@ -1,0 +1,26 @@
+services:
+  gateway:
+    build: .
+    command: uvicorn openagent_control.gateway.app:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      - OAC_OPA_URL=http://opa:8181/v1/data/openagent/authz
+      - OAC_MCP_UPSTREAM_URL=http://mcp-server:5678
+    depends_on:
+      - opa
+      - mcp-server
+
+  opa:
+    image: openpolicyagent/opa:latest
+    ports:
+      - "8181:8181"
+    command: ["run", "--server", "/policies"]
+    volumes:
+      - ./policies:/policies
+
+  mcp-server:
+    image: hashicorp/http-echo
+    command: ["-text={\"jsonrpc\": \"2.0\", \"result\": \"mocked_backend_response\"}"]
+    ports:
+      - "8080:5678"
