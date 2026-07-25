@@ -8,12 +8,14 @@ Redis client construction are lazy, so this stays a pure structural check.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 import redis.asyncio as redis_asyncio
 
 from openagent_control.adapters.audit_export.stdout import StdoutAuditExporter
 from openagent_control.adapters.db.session import make_engine, make_session_factory
 from openagent_control.adapters.identity.header import HeaderIdentityProvider
+from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
 from openagent_control.adapters.ledger.postgres import PostgresLedger
 from openagent_control.adapters.ledger.signing import ReceiptSigner
@@ -40,11 +42,29 @@ _session_factory = make_session_factory(make_engine("sqlite+aiosqlite:///:memory
 _redis = redis_asyncio.Redis()
 
 
+def _mock_discovery_transport() -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"issuer": "https://idp.test", "jwks_uri": "https://idp.test/keys"},
+        )
+
+    return httpx.MockTransport(handler)
+
+
 @pytest.mark.parametrize(
     ("adapter", "port"),
     [
         (OPAPolicyEngine(opa_url="http://opa.test"), PolicyEngine),
         (HeaderIdentityProvider(), IdentityProvider),
+        (
+            OidcJwksIdentityProvider(
+                "https://idp.test/.well-known/openid-configuration",
+                audience="oac",
+                client=httpx.Client(transport=_mock_discovery_transport()),
+            ),
+            IdentityProvider,
+        ),
         (Ed25519ChainLedger(), Ledger),
         (PostgresLedger(_session_factory, ReceiptSigner()), Ledger),
         (StubTokenExchange(), TokenExchange),

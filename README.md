@@ -33,6 +33,9 @@ Early foundation, not production-ready. In particular:
   `OAC_IDENTITY_MODE=jwt-svid` cryptographically validates a SPIFFE JWT-SVID bearer
   token (the shape SPIRE issues) but still needs an actual SPIRE deployment to be a
   full production path — see [ADR-0005](docs/adr/0005-workload-identity-via-spiffe-stubbed-in-v1.md).
+  `OAC_IDENTITY_MODE=oidc-jwks` validates a real access token from Okta or Microsoft
+  Entra ID against its published JWKS — see
+  [ADR-0010](docs/adr/0010-oidc-jwks-identity-for-okta-and-entra.md).
 - **Token exchange defaults to a stub**, with real Okta-compatible (RFC 8693) and
   Microsoft Entra (OBO) adapters available via `OAC_TOKEN_EXCHANGE_MODE` — see
   [ADR-0004](docs/adr/0004-mcp-as-the-v1-protocol-surface.md).
@@ -62,7 +65,7 @@ src/openagent_control/
 | Port | Default adapter | Also available (settings-selected) |
 |---|---|---|
 | `PolicyEngine` | Open Policy Agent (Rego), `policies/mcp_authz.rego` | — |
-| `IdentityProvider` | header-trusting stub | JWT-SVID validation |
+| `IdentityProvider` | header-trusting stub | JWT-SVID validation, OIDC/JWKS (Okta, Entra ID) |
 | `AgentRegistry` | file (`registry/agents.yaml`, git-reviewed) | Postgres (`oac.agents`), optionally Redis-cached |
 | `Ledger` | in-process Ed25519 hash-chained receipts | Postgres-backed, replica-safe chain (`oac.execution_receipts`) |
 | `TokenExchange` | stub | RFC 8693 (Okta-compatible), Microsoft Entra OBO — optionally Redis-cached to each token's own expiry |
@@ -109,14 +112,23 @@ make db-upgrade                  # alembic upgrade head against OAC_DATABASE_URL
 To point at your own Postgres instance instead: `export OAC_DATABASE_URL=postgresql+asyncpg://user:pass@host/db`
 then `make db-upgrade`.
 
-## Example: a governed LangGraph agent
+## Examples
 
-[examples/langgraph_governed_agent/](examples/langgraph_governed_agent/README.md)
-is a deterministic, zero-API-key demo of a LangGraph agent whose tool calls are
-allowed, denied, and cryptographically receipted by the gateway:
+- [examples/langgraph_governed_agent/](examples/langgraph_governed_agent/README.md) —
+  a deterministic, zero-API-key demo of a LangGraph agent whose tool calls are
+  allowed, denied, and cryptographically receipted by the gateway:
 
-```bash
-poetry install --with examples
-make up
-poetry run python -m examples.langgraph_governed_agent.demo
-```
+  ```bash
+  poetry install --with examples
+  make up
+  poetry run python -m examples.langgraph_governed_agent.demo
+  ```
+
+- [examples/oidc_identity_demo/](examples/oidc_identity_demo/README.md) — the
+  gateway authenticating agents with real Okta/Entra-shaped OIDC access tokens
+  (signature, audience, and orphan-agent checks), fully offline against a mock
+  IdP:
+
+  ```bash
+  poetry run python -m examples.oidc_identity_demo.demo
+  ```

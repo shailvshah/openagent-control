@@ -17,12 +17,24 @@ class Settings(BaseSettings):
     """OAuth audience requested in token exchanges for delegated (OBO) calls.
     For Entra this maps to the scope parameter (e.g. "api://<app-id>/.default")."""
 
-    identity_mode: Literal["header", "jwt-svid"] = "header"
+    identity_mode: Literal["header", "jwt-svid", "oidc-jwks"] = "header"
     """"header" trusts X-Spiffe-ID (dev / behind an attesting mesh only, ADR-0005);
-    "jwt-svid" cryptographically validates a SPIFFE JWT-SVID bearer token."""
+    "jwt-svid" cryptographically validates a SPIFFE JWT-SVID bearer token;
+    "oidc-jwks" validates an access token issued by an OIDC provider (Okta,
+    Microsoft Entra ID, or any OIDC-compliant IdP) against its published JWKS —
+    see ADR-0010."""
     jwt_svid_public_key_path: str = ""
     """PEM public key (SPIRE trust-bundle key) for identity_mode="jwt-svid"."""
     jwt_svid_audience: str = "openagent-control"
+
+    oidc_discovery_url: str = ""
+    """OIDC discovery document URL for identity_mode="oidc-jwks", e.g.
+    https://{okta-domain}/oauth2/default/.well-known/oauth-authorization-server
+    or https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration."""
+    oidc_audience: str = ""
+    """Expected `aud` claim (your registered application's client ID / App ID URI)."""
+    oidc_issuer: str = ""
+    """Expected `iss` claim; empty = use the discovery document's own `issuer`."""
 
     token_exchange_mode: Literal["stub", "rfc8693", "entra"] = "stub"
     """"rfc8693" = Okta-compatible RFC 8693 exchange; "entra" = Microsoft OBO flow."""

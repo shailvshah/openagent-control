@@ -11,3 +11,4 @@
 | [0007](0007-decentralized-identity-is-a-future-extension-not-v1-scope.md) | Decentralized identity (DIDs/VCs) is a future extension, not v1 scope |
 | [0008](0008-agent-registry-as-source-of-truth.md) | Agent Registry as the source of truth for agent facts |
 | [0009](0009-postgres-persistence-and-redis-caching.md) | Postgres persistence for the ledger and registry, Redis caching |
+| [0010](0010-oidc-jwks-identity-for-okta-and-entra.md) | OIDC/JWKS identity validation for Okta and Microsoft Entra ID |

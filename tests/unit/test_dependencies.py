@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -10,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from openagent_control.adapters.identity.header import HeaderIdentityProvider
 from openagent_control.adapters.identity.jwt_svid import JwtSvidIdentityProvider
+from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
 from openagent_control.adapters.ledger.postgres import PostgresLedger
 from openagent_control.adapters.registry.caching import CachingAgentRegistry
@@ -32,6 +37,42 @@ def test_default_wiring_uses_header_identity_and_stub_exchange() -> None:
     assert isinstance(container.ledger, Ed25519ChainLedger)
     assert container.db_engine is None
     assert container.redis_client is None
+
+
+class _DiscoveryHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        base = f"http://{self.headers['Host']}"
+        body = json.dumps({"issuer": base, "jwks_uri": base + "/keys"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+@pytest.fixture
+def discovery_server() -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _DiscoveryHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/.well-known/openid-configuration"
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_oidc_jwks_mode_wires_oidc_identity_provider(discovery_server: str) -> None:
+    container = build_container(
+        Settings(
+            identity_mode="oidc-jwks", oidc_discovery_url=discovery_server, oidc_audience="oac"
+        )
+    )
+
+    assert isinstance(container.identity_provider, OidcJwksIdentityProvider)
 
 
 def test_database_url_wires_postgres_registry_and_ledger() -> None:

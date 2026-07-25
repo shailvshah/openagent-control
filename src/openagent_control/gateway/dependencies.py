@@ -16,6 +16,7 @@ from fastapi import Request
 from openagent_control.adapters.audit_export.stdout import StdoutAuditExporter
 from openagent_control.adapters.identity.header import HeaderIdentityProvider
 from openagent_control.adapters.identity.jwt_svid import JwtSvidIdentityProvider
+from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
 from openagent_control.adapters.mcp_upstream.http import HttpMCPUpstream
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
@@ -85,6 +86,12 @@ def _identity_provider(settings: Settings) -> IdentityProvider:
         return JwtSvidIdentityProvider(
             public_key_path=settings.jwt_svid_public_key_path,
             audience=settings.jwt_svid_audience,
+        )
+    if settings.identity_mode == "oidc-jwks":
+        return OidcJwksIdentityProvider(
+            discovery_url=settings.oidc_discovery_url,
+            audience=settings.oidc_audience,
+            issuer=settings.oidc_issuer,
         )
     return HeaderIdentityProvider()
 
