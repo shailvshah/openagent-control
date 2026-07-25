@@ -19,9 +19,11 @@ no cryptographically trustworthy record of what an agent actually did.
 
 See [docs/design.md](docs/design.md) for the full design,
 [docs/adr/](docs/adr/README.md) for the reasoning behind each decision — including
-what's a real implementation today versus a deliberate v1 stub — and
+what's a real implementation today versus a deliberate v1 stub —
 [docs/roadmap.md](docs/roadmap.md) for where the codebase stands against the
-phased enterprise rollout plan.
+phased enterprise rollout plan, and [docs/user-journeys.md](docs/user-journeys.md)
+for how an agent developer, platform engineer, registry operator, or compliance
+reviewer actually uses it.
 
 ## Status
 
