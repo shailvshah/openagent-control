@@ -6,6 +6,26 @@ readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+authors = [{ name = "Shail Shah", email = "shailvshah@gmail.com" }]
+keywords = [
+    "mcp", "model-context-protocol", "ai-agents", "agent-governance",
+    "opa", "rego", "oauth2", "spiffe", "audit", "zero-trust",
+]
+classifiers = [
+    # 3 - Alpha, not 4/5: identity defaults to a stub and the audit signing key
+    # is in-process. Claiming Production/Stable would misrepresent that.
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
+
 dependencies = [
     "fastapi (>=0.115.0,<0.116.0)",
     "uvicorn[standard] (>=0.31.1,<1.0.0)",
@@ -35,8 +55,27 @@ persistence = [
     "greenlet (>=3.0.0,<4.0.0)",
 ]
 
+[project.scripts]
+openagent-control = "openagent_control.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/shailvshah/openagent-control"
+Repository = "https://github.com/shailvshah/openagent-control"
+Documentation = "https://github.com/shailvshah/openagent-control/blob/main/docs/deployment.md"
+Issues = "https://github.com/shailvshah/openagent-control/issues"
+Changelog = "https://github.com/shailvshah/openagent-control/releases"
+
 [tool.poetry]
 packages = [{ include = "openagent_control", from = "src" }]
+# Non-Python runtime files must be listed explicitly or the wheel ships only
+# .py and the gateway starts, reports healthy, and fails every request.
+# Verified by tests/integration/test_packaging.py.
+include = [
+    { path = "src/openagent_control/py.typed", format = ["sdist", "wheel"] },
+    { path = "src/openagent_control/alembic.ini", format = ["sdist", "wheel"] },
+    { path = "src/openagent_control/migrations/**/*", format = ["sdist", "wheel"] },
+    { path = "src/openagent_control/resources/**/*", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.group.examples]
 optional = true

@@ -17,8 +17,13 @@ class Settings(BaseSettings):
     requires — see ADR-0011. "raw-jsonrpc" POSTs a bare JSON-RPC body, which
     only suits a plain internal HTTP endpoint that is not actually an MCP
     server; a real one answers it with 406 Not Acceptable."""
-    registry_path: str = "registry/agents.yaml"
-    """Master Agent Registry file (ADR-0008)."""
+    registry_path: str = ""
+    """Master Agent Registry file (ADR-0008). Empty = the empty starter registry
+    bundled in the package, which denies every agent until you register one.
+
+    This must not default to a relative path: a pip-installed gateway would
+    then resolve it against the caller's working directory, start, report
+    healthy, and fail every request with FileNotFoundError."""
 
     delegated_audience: str = "openagent-control-mcp-upstream"
     """OAuth audience requested in token exchanges for delegated (OBO) calls.

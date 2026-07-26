@@ -1,0 +1,32 @@
+# Master Agent Registry — starter template (ADR-0008).
+#
+# This is the file a fresh `pip install` falls back to when OAC_REGISTRY_PATH
+# is unset. It is deliberately EMPTY.
+#
+# Every agent that may call through the gateway must have a record here. An
+# unregistered identity is refused and the attempt is still receipted, so an
+# empty registry is the safe default: the gateway runs and denies everything,
+# rather than starting life trusting an identity you never registered.
+#
+# Copy it somewhere writable and point OAC_REGISTRY_PATH at it:
+#
+#     openagent-control init ./oac
+#     export OAC_REGISTRY_PATH=./oac/agents.yaml
+#
+# Then add entries of this shape:
+#
+#   - spiffe_id: oidc://https://idp.example.com/realms/prod/invoice-svc
+#     display_name: Invoice Service
+#     purpose: Read and reconcile finance invoices.
+#     owner: platform-team@example.com
+#     risk_tier: medium          # low | medium | high
+#     status: active             # active | suspended
+#     granted_tools:
+#       - read_query
+#
+# `spiffe_id` must match the identity the gateway derives for the caller. For
+# OAC_IDENTITY_MODE=oidc-jwks that is oidc://{issuer}/{client_id} — see
+# ADR-0010. Register an agent as `suspended` first if you want it on record
+# before it gets traffic.
+
+agents: []

@@ -1,54 +1,90 @@
+# Default stack = what you would actually deploy: the gateway and OPA.
+#
+#   docker compose up                          gateway + OPA
+#   docker compose --profile persistence up    + Postgres + Redis
+#   docker compose --profile demo up           + a demo IdP and MCP server
+#
+# The demo services are behind a profile on purpose. They ship a hardcoded
+# client secret and an authorization server that will mint a token for anyone
+# who asks — fine for a walkthrough, a serious foot-gun in anything reachable.
+# See examples/enterprise_scenario/.
 services:
   gateway:
     build: .
-    command: uvicorn openagent_control.gateway.app:app --host 0.0.0.0 --port 8000
+    image: openagent-control:local
     ports:
       - "8000:8000"
     environment:
       - OAC_OPA_URL=http://opa:8181/v1/data/openagent/authz
-      - OAC_MCP_UPSTREAM_URL=http://enterprise-backend:8080/mcp
-      # Real OIDC identity + real RFC 8693 credential brokering against the
-      # authorization server in the enterprise-backend service.
-      - OAC_IDENTITY_MODE=oidc-jwks
-      - OAC_OIDC_DISCOVERY_URL=http://enterprise-backend:8090/.well-known/openid-configuration
-      - OAC_OIDC_AUDIENCE=api://openagent-control-gateway
-      - OAC_TOKEN_EXCHANGE_MODE=rfc8693
-      - OAC_TOKEN_EXCHANGE_URL=http://enterprise-backend:8090/oauth2/v1/token
-      - OAC_TOKEN_EXCHANGE_CLIENT_ID=openagent-control-gateway
-      - OAC_TOKEN_EXCHANGE_CLIENT_SECRET=scenario-only-not-a-real-secret
-      - OAC_DELEGATED_AUDIENCE=https://finance-mcp.corp.net
-      # Empty by default (in-memory ledger + file registry, ADR-0003/0008).
-      # Set on the host and run with --profile persistence to opt into
-      # Postgres + Redis (ADR-0009):
+      - OAC_REGISTRY_PATH=/etc/openagent-control/agents.yaml
+      # Everything below is unset by default: the gateway runs with the
+      # in-process ledger and file registry and no external dependencies.
+      - OAC_MCP_UPSTREAM_URL=${OAC_MCP_UPSTREAM_URL:-http://enterprise-backend:8080/mcp}
+      - OAC_MCP_UPSTREAM_MODE=${OAC_MCP_UPSTREAM_MODE:-streamable-http}
+      - OAC_IDENTITY_MODE=${OAC_IDENTITY_MODE:-header}
+      - OAC_OIDC_DISCOVERY_URL=${OAC_OIDC_DISCOVERY_URL:-}
+      - OAC_OIDC_AUDIENCE=${OAC_OIDC_AUDIENCE:-}
+      - OAC_TOKEN_EXCHANGE_MODE=${OAC_TOKEN_EXCHANGE_MODE:-stub}
+      - OAC_TOKEN_EXCHANGE_URL=${OAC_TOKEN_EXCHANGE_URL:-}
+      - OAC_TOKEN_EXCHANGE_CLIENT_ID=${OAC_TOKEN_EXCHANGE_CLIENT_ID:-}
+      - OAC_TOKEN_EXCHANGE_CLIENT_SECRET=${OAC_TOKEN_EXCHANGE_CLIENT_SECRET:-}
+      - OAC_DELEGATED_AUDIENCE=${OAC_DELEGATED_AUDIENCE:-openagent-control-mcp-upstream}
       - OAC_DATABASE_URL=${OAC_DATABASE_URL:-}
       - OAC_REDIS_URL=${OAC_REDIS_URL:-}
-    # oidc-jwks mode fetches the discovery document at startup, so the gateway
-    # must not boot before the authorization server is actually serving —
-    # plain depends_on only waits for container start, not readiness.
+    volumes:
+      # The registry is the authorization boundary — mounted read-only so the
+      # gateway cannot rewrite its own allowlist (ADR-0008).
+      - ./registry/agents.yaml:/etc/openagent-control/agents.yaml:ro
     depends_on:
-      opa:
-        condition: service_started
-      enterprise-backend:
-        condition: service_healthy
+      - opa
 
   opa:
     image: openpolicyagent/opa:latest
+    command: ["run", "--server", "/policies"]
     ports:
       - "8181:8181"
-    command: ["run", "--server", "/policies"]
     volumes:
-      - ./policies:/policies
+      # Canonical policy source, shipped inside the package so the container
+      # and a pip install evaluate identical Rego.
+      - ./src/openagent_control/resources/policies:/policies:ro
 
-  # The downstream system the gateway governs access to: a real MCP JSON-RPC
-  # server over a real SQLite database, plus the authorization server that mints
-  # the short-lived scoped credential it accepts. It validates that credential's
-  # signature, issuer, audience, and scope — so an agent that bypasses the
-  # gateway is refused. See examples/enterprise_scenario/.
+  # --- optional persistence (ADR-0009) -------------------------------------
+  # Run `openagent-control migrate` once after starting these, or the gateway
+  # connects fine and then fails every query with `no such table`.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["persistence"]
+    environment:
+      - POSTGRES_USER=oac
+      - POSTGRES_PASSWORD=oac
+      - POSTGRES_DB=oac
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oac"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["persistence"]
+    ports:
+      - "6379:6379"
+
+  # --- demo only: not part of a deployment ---------------------------------
   enterprise-backend:
     build: .
-    command: python -m examples.enterprise_scenario.serve
+    image: openagent-control:local
+    profiles: ["demo"]
+    # The runtime image installs only the wheel, so examples/ is not in it.
+    # Mounted rather than packaged: demo code has no business shipping to
+    # users who pip install the gateway.
+    entrypoint: ["python", "-m", "examples.enterprise_scenario.serve"]
     environment:
       - OAC_SCENARIO_ISSUER=http://enterprise-backend:8090
+      - PYTHONPATH=/opt/oac
+    volumes:
+      - ./examples:/opt/oac/examples:ro
     ports:
       - "8080:8080"
       - "8090:8090"
@@ -62,39 +98,12 @@ services:
       timeout: 3s
       retries: 15
 
-  # Optional: a real, third-party IdP for conformance testing the OIDC and
-  # RFC 8693 adapters against something this repo did not write (see
-  # examples/enterprise_scenario/keycloak/). Not part of the default stack —
-  # the scenario's own authorization server is faster and dependency-free.
-  #
-  #   docker compose --profile keycloak up -d keycloak
-  #   KC_HOME=... examples/enterprise_scenario/keycloak/provision.sh http://localhost:8380
-  #   OAC_TEST_KEYCLOAK_URL=http://localhost:8380/realms/oac poetry run pytest tests/integration/
   keycloak:
     image: quay.io/keycloak/keycloak:26.4.2
-    profiles: ["keycloak"]
+    profiles: ["demo"]
     command: ["start-dev", "--http-port=8380"]
     environment:
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
     ports:
       - "8380:8380"
-
-  # Optional persistence layer (ADR-0009). Not started by plain `docker compose
-  # up`; requires `--profile persistence` and OAC_DATABASE_URL/OAC_REDIS_URL set
-  # to point the gateway at these (see README).
-  postgres:
-    image: postgres:16-alpine
-    profiles: ["persistence"]
-    environment:
-      - POSTGRES_USER=oac
-      - POSTGRES_PASSWORD=oac
-      - POSTGRES_DB=oac
-    ports:
-      - "5432:5432"
-
-  redis:
-    image: redis:7-alpine
-    profiles: ["persistence"]
-    ports:
-      - "6379:6379"

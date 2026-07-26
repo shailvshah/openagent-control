@@ -1,35 +1,42 @@
-# Multi-stage: poetry and build tooling stay in the builder; the runtime image
-# carries only the virtualenv and application files.
+# Multi-stage. The builder produces a wheel; the runtime installs *that wheel*
+# and nothing else — no source tree, no repo layout on disk.
+#
+# This is deliberate. Copying src/ into the image would let the container pass
+# while the published package is broken: policies, migrations and the default
+# registry all used to live outside the package and were absent from the wheel,
+# so a `pip install` started, answered /healthz with 200, and failed every
+# request. Building from the wheel means the image cannot succeed unless a pip
+# install would too.
 FROM python:3.11-slim AS builder
 
-WORKDIR /app
-ENV POETRY_VIRTUALENVS_IN_PROJECT=1
-
+WORKDIR /build
 RUN pip install --no-cache-dir poetry==2.3.2
 
 COPY pyproject.toml poetry.lock README.md LICENSE ./
 COPY src ./src
-# Install with the persistence extra so the same image can run either mode;
-# the code lazy-imports that stack, so leaving it unused costs image size only,
-# not runtime memory.
-RUN poetry install --only main --extras persistence
+RUN poetry build -f wheel
+
 
 FROM python:3.11-slim
 
-WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH"
+# The persistence extra is installed so one image serves both modes; the code
+# lazy-imports that stack, so leaving it unused costs image size, not memory.
+COPY --from=builder /build/dist/*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/*.whl'[persistence]' && rm /tmp/*.whl
 
-COPY --from=builder /app/.venv ./.venv
-COPY src ./src
-COPY registry ./registry
-COPY policies ./policies
-COPY migrations ./migrations
-COPY alembic.ini ./
-# The compose stack runs examples/enterprise_scenario/serve.py as the governed
-# downstream system (real MCP server + authorization server). Needs no extra
-# dependencies — only stdlib, pyjwt, and cryptography, all already installed.
-COPY examples ./examples
-ENV PYTHONPATH=/app
+# Run unprivileged: the gateway holds the token-exchange client secret and sits
+# in the path to internal systems, so root in the container is not warranted.
+RUN useradd --create-home --uid 10001 oac
+USER oac
+WORKDIR /home/oac
 
 EXPOSE 8000
-CMD ["uvicorn", "openagent_control.gateway.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Liveness only. Readiness (/readyz) checks OPA, the database schema and Redis;
+# it belongs in the orchestrator's readiness probe, not here, or the container
+# would be killed and restarted for a dependency a restart cannot fix.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"
+
+ENTRYPOINT ["openagent-control"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]

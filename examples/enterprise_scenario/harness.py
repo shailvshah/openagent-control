@@ -23,6 +23,7 @@ import yaml
 
 from examples.enterprise_scenario.authorization_server import AGENT_CLIENT_ID
 from openagent_control.config import Settings
+from openagent_control.resources import default_policy_dir
 from openagent_control.gateway.app import create_app
 
 __all__ = [
@@ -70,7 +71,7 @@ def run_opa() -> Iterator[str]:
         )
     port = free_port()
     process = subprocess.Popen(
-        ["opa", "run", "--server", "--addr", f"127.0.0.1:{port}", str(REPO_ROOT / "policies")],
+        ["opa", "run", "--server", "--addr", f"127.0.0.1:{port}", str(default_policy_dir())],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

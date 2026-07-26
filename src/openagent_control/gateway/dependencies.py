@@ -9,6 +9,7 @@ settings consumed here, and nothing else.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from fastapi import Request
@@ -36,6 +37,7 @@ from openagent_control.domain.ports import (
     PolicyEngine,
     TokenExchange,
 )
+from openagent_control.resources import example_registry
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -113,6 +115,24 @@ def _token_exchange(settings: Settings) -> TokenExchange:
     return StubTokenExchange()
 
 
+def resolve_registry_path(settings: Settings) -> Path:
+    """The registry file to read, failing fast if it is missing.
+
+    Startup is the right place for this error. Left to the first request, a
+    missing registry surfaces as a 500 per call while /healthz keeps returning
+    200 — a green signal over a gateway that cannot serve anything.
+    """
+    if not settings.registry_path:
+        return example_registry()
+    path = Path(settings.registry_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"OAC_REGISTRY_PATH points at '{path}', which does not exist. "
+            "Create one with: openagent-control init <dir>"
+        )
+    return path
+
+
 def _mcp_upstream(settings: Settings) -> MCPUpstream:
     if settings.mcp_upstream_mode == "raw-jsonrpc":
         return HttpMCPUpstream(upstream_url=settings.mcp_upstream_url)
@@ -146,7 +166,7 @@ def build_container(settings: Settings) -> Container:
         agent_registry: AgentRegistry = PostgresAgentRegistry(session_factory)
         ledger: Ledger = PostgresLedger(session_factory, ReceiptSigner())
     else:
-        agent_registry = FileAgentRegistry(settings.registry_path)
+        agent_registry = FileAgentRegistry(resolve_registry_path(settings))
         ledger = Ed25519ChainLedger()
 
     token_exchange = _token_exchange(settings)

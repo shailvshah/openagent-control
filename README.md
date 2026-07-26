@@ -17,13 +17,14 @@ no cryptographically trustworthy record of what an agent actually did.
 3. **Audit** — every decision produces an Ed25519-signed, hash-chained receipt, so a
    compliance reviewer can prove after the fact what was authorized and executed.
 
-See [docs/design.md](docs/design.md) for the full design,
-[docs/adr/](docs/adr/README.md) for the reasoning behind each decision — including
+See [docs/design.md](https://github.com/shailvshah/openagent-control/blob/main/docs/design.md) for the full design,
+[docs/adr/](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/README.md) for the reasoning behind each decision — including
 what's a real implementation today versus a deliberate v1 stub —
-[docs/roadmap.md](docs/roadmap.md) for where the codebase stands against the
-phased enterprise rollout plan, and [docs/user-journeys.md](docs/user-journeys.md)
+[docs/roadmap.md](https://github.com/shailvshah/openagent-control/blob/main/docs/roadmap.md) for where the codebase stands against the
+phased enterprise rollout plan, and [docs/user-journeys.md](https://github.com/shailvshah/openagent-control/blob/main/docs/user-journeys.md)
 for how an agent developer, platform engineer, registry operator, or compliance
-reviewer actually uses it.
+reviewer actually uses it, and [docs/deployment.md](https://github.com/shailvshah/openagent-control/blob/main/docs/deployment.md) for
+installing and running it.
 
 ## Status
 
@@ -34,27 +35,27 @@ Early foundation, not production-ready. In particular:
   safe behind a network boundary that has already authenticated the caller.
   `OAC_IDENTITY_MODE=jwt-svid` cryptographically validates a SPIFFE JWT-SVID bearer
   token (the shape SPIRE issues) but still needs an actual SPIRE deployment to be a
-  full production path — see [ADR-0005](docs/adr/0005-workload-identity-via-spiffe-stubbed-in-v1.md).
+  full production path — see [ADR-0005](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0005-workload-identity-via-spiffe-stubbed-in-v1.md).
   `OAC_IDENTITY_MODE=oidc-jwks` validates a real access token from Okta or Microsoft
   Entra ID against its published JWKS — see
-  [ADR-0010](docs/adr/0010-oidc-jwks-identity-for-okta-and-entra.md).
+  [ADR-0010](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0010-oidc-jwks-identity-for-okta-and-entra.md).
 - **Token exchange defaults to a stub**, with real Okta-compatible (RFC 8693) and
   Microsoft Entra (OBO) adapters available via `OAC_TOKEN_EXCHANGE_MODE` — see
-  [ADR-0004](docs/adr/0004-mcp-as-the-v1-protocol-surface.md).
+  [ADR-0004](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0004-mcp-as-the-v1-protocol-surface.md).
 - **The ledger's signing key defaults to in-process** (regenerated on restart) unless
   you inject your own `ReceiptSigner`; there's no KMS/HSM adapter yet. Chain state
   itself, however, is durable and replica-safe once `OAC_DATABASE_URL` is set — see
-  [ADR-0003](docs/adr/0003-ed25519-hash-chained-audit-ledger.md) and
-  [ADR-0009](docs/adr/0009-postgres-persistence-and-redis-caching.md).
+  [ADR-0003](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0003-ed25519-hash-chained-audit-ledger.md) and
+  [ADR-0009](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0009-postgres-persistence-and-redis-caching.md).
 - No Human-in-the-Loop approval flow, no sidecar/native-SDK deployment pattern, no
   cross-organization (DID/VC) identity yet — tracked in
-  [ADR-0001](docs/adr/0001-hybrid-interception-pattern.md) and
-  [ADR-0007](docs/adr/0007-decentralized-identity-is-a-future-extension-not-v1-scope.md).
+  [ADR-0001](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0001-hybrid-interception-pattern.md) and
+  [ADR-0007](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0007-decentralized-identity-is-a-future-extension-not-v1-scope.md).
 
 ## Architecture
 
 Hexagonal (ports & adapters) — see
-[ADR-0006](docs/adr/0006-hexagonal-architecture-for-the-control-plane.md).
+[ADR-0006](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0006-hexagonal-architecture-for-the-control-plane.md).
 
 ```
 src/openagent_control/
@@ -74,6 +75,25 @@ src/openagent_control/
 | `MCPUpstream` | MCP Streamable HTTP via the official MCP SDK (ADR-0011) | plain JSON-RPC over HTTP, for non-MCP internal endpoints |
 | `AuditExporter` | stdout/log | — |
 
+## Install
+
+```bash
+pip install openagent-control                  # gateway + OPA
+pip install 'openagent-control[persistence]'   # + Postgres / Redis support
+
+openagent-control init ./oac                   # starter registry + policy
+export OAC_REGISTRY_PATH=./oac/agents.yaml
+openagent-control doctor                       # checks every dependency
+openagent-control serve
+```
+
+Or with containers — `docker compose up` (gateway + OPA),
+`--profile persistence` for Postgres/Redis, `--profile demo` for the
+walkthrough stack. Full guide: **[docs/deployment.md](https://github.com/shailvshah/openagent-control/blob/main/docs/deployment.md)**.
+
+With no registry configured the gateway starts and **denies every agent** — a
+fresh install trusts nothing until you register something.
+
 ## Development
 
 ```bash
@@ -81,7 +101,10 @@ make install      # poetry install --all-extras
 make quality      # black --check, ruff, mypy
 make test         # pytest with coverage (95% gate)
 make check        # quality + test
-make up           # docker compose: gateway + OPA + governed MCP server + authorization server
+make up           # docker compose: gateway + OPA
+make up-demo      # + demo IdP and governed MCP server
+make doctor       # verify config and dependencies
+make test-packaging  # build a wheel, install it clean, run it from elsewhere
 ```
 
 Requires Python 3.11+ and [Poetry](https://python-poetry.org/). The integration
@@ -104,7 +127,7 @@ curl -X POST http://localhost:8000/mcp/v1 \
 
 The upstream MCP server validates the short-lived credential the gateway brokers
 for it, so the same request sent directly to `localhost:8080` is refused. See
-[examples/enterprise_scenario/](examples/enterprise_scenario/README.md).
+[examples/enterprise_scenario/](https://github.com/shailvshah/openagent-control/blob/main/examples/enterprise_scenario/README.md).
 
 ## Persistence & caching (optional)
 
@@ -115,7 +138,7 @@ and is lazy-imported, so the default deployment doesn't pay its ~20MB of residen
 memory or its install footprint. Set `OAC_DATABASE_URL` to switch the registry and
 ledger to Postgres (own `oac` schema, migrated via Alembic), and `OAC_REDIS_URL` to
 cache registry lookups (30s TTL) and brokered tokens (capped at each token's own
-expiry). See [ADR-0009](docs/adr/0009-postgres-persistence-and-redis-caching.md).
+expiry). See [ADR-0009](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0009-postgres-persistence-and-redis-caching.md).
 
 ```bash
 make up-persistent               # docker compose --profile persistence: + postgres, redis
@@ -127,7 +150,7 @@ then `make db-upgrade`.
 
 ## Examples
 
-- **[examples/enterprise_scenario/](examples/enterprise_scenario/README.md) — the
+- **[examples/enterprise_scenario/](https://github.com/shailvshah/openagent-control/blob/main/examples/enterprise_scenario/README.md) — the
   full stack with nothing stubbed.** A LangGraph agent, real OIDC/JWKS identity,
   real OPA, real RFC 8693 credential brokering, and a real MCP server over real
   SQLite that validates the brokered credential's signature, audience, and scope.
@@ -141,7 +164,7 @@ then `make db-upgrade`.
   poetry run python -m examples.enterprise_scenario.scenario
   ```
 
-  Its [`keycloak/`](examples/enterprise_scenario/keycloak/README.md) suite runs
+  Its [`keycloak/`](https://github.com/shailvshah/openagent-control/blob/main/examples/enterprise_scenario/keycloak/README.md) suite runs
   the same identity and RFC 8693 adapters against **real Keycloak 26.4** — an
   IdP this repo didn't write, so it can't share our bugs. That check earned its
   keep on the first run: it caught the identity adapter misreading Keycloak's
@@ -151,9 +174,9 @@ then `make db-upgrade`.
   The same is done for the MCP protocol itself against **GitHub's production
   MCP server** (`tests/integration/test_github_mcp_conformance.py`), which is
   how we found that the original upstream adapter did not speak MCP at all —
-  see [ADR-0011](docs/adr/0011-mcp-streamable-http-via-the-official-sdk.md).
+  see [ADR-0011](https://github.com/shailvshah/openagent-control/blob/main/docs/adr/0011-mcp-streamable-http-via-the-official-sdk.md).
 
-- [examples/langgraph_governed_agent/](examples/langgraph_governed_agent/README.md) —
+- [examples/langgraph_governed_agent/](https://github.com/shailvshah/openagent-control/blob/main/examples/langgraph_governed_agent/README.md) —
   a deterministic, zero-API-key demo of a LangGraph agent whose tool calls are
   allowed, denied, and cryptographically receipted by the gateway:
 
@@ -163,7 +186,7 @@ then `make db-upgrade`.
   poetry run python -m examples.langgraph_governed_agent.demo
   ```
 
-- [examples/oidc_identity_demo/](examples/oidc_identity_demo/README.md) — the
+- [examples/oidc_identity_demo/](https://github.com/shailvshah/openagent-control/blob/main/examples/oidc_identity_demo/README.md) — the
   gateway authenticating agents with real Okta/Entra-shaped OIDC access tokens
   (signature, audience, and orphan-agent checks), fully offline against a mock
   IdP:

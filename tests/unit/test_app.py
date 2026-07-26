@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from openagent_control.config import Settings
+from openagent_control.diagnostics import Check
 from openagent_control.gateway.app import create_app
 
 
@@ -62,3 +64,33 @@ def test_container_aclose_tolerates_adapters_without_aclose() -> None:
     )
 
     asyncio.run(container.aclose())
+
+
+def test_readyz_returns_503_when_a_dependency_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An orchestrator must stop routing to a gateway that would 500."""
+
+    async def one_bad(_settings: object) -> list[Check]:
+        return [Check("opa", False, "connection refused"), Check("redis", True, "ping ok")]
+
+    monkeypatch.setattr("openagent_control.gateway.app.run_all", one_bad)
+    client = TestClient(create_app(), raise_server_exceptions=False)
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "not ready"
+    assert {"name": "opa", "ok": False, "detail": "connection refused"} in body["checks"]
+
+
+def test_readyz_returns_200_when_every_check_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def all_ok(_settings: object) -> list[Check]:
+        return [Check("opa", True, "HTTP 200")]
+
+    monkeypatch.setattr("openagent_control.gateway.app.run_all", all_ok)
+    client = TestClient(create_app(), raise_server_exceptions=False)
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
