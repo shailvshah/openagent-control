@@ -48,5 +48,8 @@ doctor:
 	poetry run openagent-control doctor
 
 # Verifies the built wheel actually works from a clean venv (slow).
+# --no-cov: these tests exercise a wheel installed into a separate venv, so the
+# parent process collects no coverage data and the global --cov-fail-under=95
+# would fail the run even when every assertion passes.
 test-packaging:
-	OAC_TEST_PACKAGING=1 poetry run pytest tests/integration/test_packaging.py -v
+	OAC_TEST_PACKAGING=1 poetry run pytest tests/integration/test_packaging.py -v --no-cov
