@@ -12,3 +12,4 @@
 | [0008](0008-agent-registry-as-source-of-truth.md) | Agent Registry as the source of truth for agent facts |
 | [0009](0009-postgres-persistence-and-redis-caching.md) | Postgres persistence for the ledger and registry, Redis caching |
 | [0010](0010-oidc-jwks-identity-for-okta-and-entra.md) | OIDC/JWKS identity validation for Okta and Microsoft Entra ID |
+| [0011](0011-mcp-streamable-http-via-the-official-sdk.md) | Speak MCP via the official SDK, not hand-rolled JSON-RPC |

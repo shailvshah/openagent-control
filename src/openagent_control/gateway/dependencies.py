@@ -19,6 +19,7 @@ from openagent_control.adapters.identity.jwt_svid import JwtSvidIdentityProvider
 from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
 from openagent_control.adapters.mcp_upstream.http import HttpMCPUpstream
+from openagent_control.adapters.mcp_upstream.streamable_http import StreamableHttpMCPUpstream
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
 from openagent_control.adapters.registry.file import FileAgentRegistry
 from openagent_control.adapters.token_exchange.entra_obo import EntraOnBehalfOfTokenExchange
@@ -112,6 +113,12 @@ def _token_exchange(settings: Settings) -> TokenExchange:
     return StubTokenExchange()
 
 
+def _mcp_upstream(settings: Settings) -> MCPUpstream:
+    if settings.mcp_upstream_mode == "raw-jsonrpc":
+        return HttpMCPUpstream(upstream_url=settings.mcp_upstream_url)
+    return StreamableHttpMCPUpstream(upstream_url=settings.mcp_upstream_url)
+
+
 def _require_persistence(feature: str) -> NoReturn:
     """Raises a clear startup error if the optional persistence extra is missing."""
     raise RuntimeError(
@@ -173,7 +180,7 @@ def build_container(settings: Settings) -> Container:
         ledger=ledger,
         audit_exporter=StdoutAuditExporter(),
         token_exchange=token_exchange,
-        mcp_upstream=HttpMCPUpstream(upstream_url=settings.mcp_upstream_url),
+        mcp_upstream=_mcp_upstream(settings),
         delegated_audience=settings.delegated_audience,
         db_engine=db_engine,
         redis_client=redis_client,

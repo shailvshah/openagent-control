@@ -6,7 +6,7 @@ services:
       - "8000:8000"
     environment:
       - OAC_OPA_URL=http://opa:8181/v1/data/openagent/authz
-      - OAC_MCP_UPSTREAM_URL=http://enterprise-backend:8080
+      - OAC_MCP_UPSTREAM_URL=http://enterprise-backend:8080/mcp
       # Real OIDC identity + real RFC 8693 credential brokering against the
       # authorization server in the enterprise-backend service.
       - OAC_IDENTITY_MODE=oidc-jwks

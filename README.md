@@ -71,7 +71,7 @@ src/openagent_control/
 | `AgentRegistry` | file (`registry/agents.yaml`, git-reviewed) | Postgres (`oac.agents`), optionally Redis-cached |
 | `Ledger` | in-process Ed25519 hash-chained receipts | Postgres-backed, replica-safe chain (`oac.execution_receipts`) |
 | `TokenExchange` | stub | RFC 8693 (Okta-compatible), Microsoft Entra OBO — optionally Redis-cached to each token's own expiry |
-| `MCPUpstream` | HTTP forward to a downstream MCP server | — |
+| `MCPUpstream` | MCP Streamable HTTP via the official MCP SDK (ADR-0011) | plain JSON-RPC over HTTP, for non-MCP internal endpoints |
 | `AuditExporter` | stdout/log | — |
 
 ## Development
@@ -147,6 +147,11 @@ then `make db-upgrade`.
   keep on the first run: it caught the identity adapter misreading Keycloak's
   service-account `sub` as a human sponsor, which would have 401'd every
   autonomous agent.
+
+  The same is done for the MCP protocol itself against **GitHub's production
+  MCP server** (`tests/integration/test_github_mcp_conformance.py`), which is
+  how we found that the original upstream adapter did not speak MCP at all —
+  see [ADR-0011](docs/adr/0011-mcp-streamable-http-via-the-official-sdk.md).
 
 - [examples/langgraph_governed_agent/](examples/langgraph_governed_agent/README.md) —
   a deterministic, zero-API-key demo of a LangGraph agent whose tool calls are

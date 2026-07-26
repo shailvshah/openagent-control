@@ -11,6 +11,7 @@ one, and substituting a fake would defeat the purpose of the test.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -36,6 +37,10 @@ from examples.enterprise_scenario.harness import (
     write_registry,
 )
 from examples.enterprise_scenario.mcp_server import run_mcp_server
+
+from openagent_control.adapters.mcp_upstream.streamable_http import StreamableHttpMCPUpstream
+from openagent_control.domain.errors import UpstreamError
+from openagent_control.domain.models import AgentIdentity, ToolCallRequest
 
 pytestmark = pytest.mark.skipif(
     shutil.which("opa") is None, reason="requires the real `opa` binary (brew install opa)"
@@ -92,10 +97,15 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
             yield Stack(auth, gateway_url, mcp_url, registry)
 
 
-def test_granted_call_returns_real_rows_via_a_brokered_credential(stack: Stack) -> None:
-    body = stack.call("read_query", {"quarter": "Q3"}).json()
+def _rows(response: httpx.Response) -> dict[str, Any]:
+    """Unwraps a real MCP CallToolResult's structured content."""
+    content: dict[str, Any] = response.json()["result"]["structuredContent"]
+    return content
 
-    result = body["result"]
+
+def test_granted_call_returns_real_rows_via_a_brokered_credential(stack: Stack) -> None:
+    result = _rows(stack.call("read_query", {"quarter": "Q3"}))
+
     assert [row["invoice_id"] for row in result["rows"]] == ["INV-1001", "INV-1002", "INV-1003"]
     # Proves the MCP server served this off the brokered token's own delegation
     # claims, not off anything the agent asserted.
@@ -108,41 +118,32 @@ def test_ungranted_capability_is_denied_before_reaching_the_upstream(stack: Stac
 
     assert "Capability not granted" in body["error"]["message"]
     # The invoice must be untouched: the denial has to stop the call, not just log it.
-    rows = stack.call("read_query", {"quarter": "Q3"}).json()["result"]["rows"]
+    rows = _rows(stack.call("read_query", {"quarter": "Q3"}))["rows"]
     assert next(r for r in rows if r["invoice_id"] == "INV-1001")["status"] == "open"
+
+
+def _direct_call(mcp_url: str, credential: str) -> None:
+    """Calls the MCP server over the real transport, bypassing the gateway."""
+    request = ToolCallRequest(
+        method="tools/call",
+        tool_name="read_query",
+        arguments={"quarter": "Q3"},
+        agent=AgentIdentity(spiffe_id="oidc://bypass/attempt"),
+        registration=None,
+        request_id=1,
+    )
+    asyncio.run(StreamableHttpMCPUpstream(mcp_url).forward(request, credential))
 
 
 def test_bypassing_the_gateway_is_refused_by_the_upstream(stack: Stack) -> None:
     """The gateway must be load-bearing: the agent's own valid token is useless here."""
-    direct = httpx.post(
-        stack.mcp_url,
-        headers={"Authorization": f"Bearer {stack.agent_token}"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "read_query", "arguments": {"quarter": "Q3"}},
-        },
-        timeout=10.0,
-    )
-
-    assert direct.status_code == 401
-    assert "Audience" in direct.json()["error"]["message"]
+    with pytest.raises(UpstreamError, match="401"):
+        _direct_call(stack.mcp_url, stack.agent_token)
 
 
-def test_unauthenticated_upstream_call_is_refused(stack: Stack) -> None:
-    direct = httpx.post(
-        stack.mcp_url,
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "read_query", "arguments": {"quarter": "Q3"}},
-        },
-        timeout=10.0,
-    )
-
-    assert direct.status_code == 401
+def test_upstream_refuses_a_credential_it_did_not_issue(stack: Stack) -> None:
+    with pytest.raises(UpstreamError, match="401"):
+        _direct_call(stack.mcp_url, "not-a-token-this-server-issued")
 
 
 def test_token_exchange_rejects_an_unauthenticated_client(stack: Stack) -> None:
@@ -184,7 +185,7 @@ def test_autonomous_agent_gets_a_real_brokered_credential(stack: Stack) -> None:
         timeout=15.0,
     )
 
-    result = response.json()["result"]
+    result = _rows(response)
     assert len(result["rows"]) == 3
     assert result["_served_for"] == AGENT_CLIENT_ID
     assert result["_via_actor"] == GATEWAY_CLIENT_ID

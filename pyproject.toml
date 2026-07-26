@@ -8,7 +8,11 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
     "fastapi (>=0.115.0,<0.116.0)",
-    "uvicorn[standard] (>=0.30.0,<0.31.0)",
+    "uvicorn[standard] (>=0.31.1,<1.0.0)",
+    # The official MCP SDK. This is an MCP gateway: the Streamable HTTP
+    # transport (initialize handshake, session ids, SSE framing) is implemented
+    # by the SDK rather than approximated here — see ADR-0011.
+    "mcp (>=1.28.1,<2.0.0)",
     "httpx (>=0.27.0,<0.28.0)",
     "pydantic (>=2.8.0,<3.0.0)",
     "pydantic-settings (>=2.4.0,<3.0.0)",

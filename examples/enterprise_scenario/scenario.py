@@ -30,6 +30,7 @@ Requires the `opa` binary on PATH (brew install opa).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,9 @@ from examples.enterprise_scenario.harness import (
     write_registry,
 )
 from examples.enterprise_scenario.mcp_server import run_mcp_server
+from openagent_control.adapters.mcp_upstream.streamable_http import StreamableHttpMCPUpstream
+from openagent_control.domain.errors import UpstreamError
+from openagent_control.domain.models import AgentIdentity, ToolCallRequest
 
 
 def _print_conversation(messages: list[Any]) -> None:
@@ -132,10 +136,21 @@ def _run_scenarios(
     print("    Real OPA evaluated policies/mcp_authz.rego against the registry facts.")
 
     _banner(3, "Gateway bypass: the agent calls the MCP server directly")
-    direct = httpx.post(
-        mcp_url, headers={"Authorization": f"Bearer {agent_token}"}, json=read_call, timeout=10.0
+    # Uses the real MCP client, so the refusal is specifically about the token's
+    # audience -- not merely a malformed request the server couldn't parse.
+    bypass = ToolCallRequest(
+        method="tools/call",
+        tool_name="read_query",
+        arguments={"quarter": "Q3"},
+        agent=AgentIdentity(spiffe_id=f"oidc://{auth.issuer}/{AGENT_CLIENT_ID}"),
+        registration=None,
+        request_id=1,
     )
-    print(f"    HTTP {direct.status_code}  {json.dumps(direct.json())}")
+    try:
+        asyncio.run(StreamableHttpMCPUpstream(mcp_url).forward(bypass, agent_token))
+        print("    UNEXPECTED: the upstream served a bypassing agent")
+    except UpstreamError as exc:
+        print(f"    REFUSED: {exc}")
     print(
         "\n    The agent's own token is cryptographically valid -- it is the very one\n"
         "    the gateway just accepted. It is refused here because its audience is\n"

@@ -10,6 +10,13 @@ class Settings(BaseSettings):
 
     opa_url: str = "http://localhost:8181/v1/data/openagent/authz"
     mcp_upstream_url: str = "http://localhost:8080"
+
+    mcp_upstream_mode: Literal["streamable-http", "raw-jsonrpc"] = "streamable-http"
+    """"streamable-http" speaks the real MCP transport via the official SDK
+    (initialize handshake, session ids, SSE) and is what any genuine MCP server
+    requires — see ADR-0011. "raw-jsonrpc" POSTs a bare JSON-RPC body, which
+    only suits a plain internal HTTP endpoint that is not actually an MCP
+    server; a real one answers it with 406 Not Acceptable."""
     registry_path: str = "registry/agents.yaml"
     """Master Agent Registry file (ADR-0008)."""
 

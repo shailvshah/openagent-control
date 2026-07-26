@@ -44,7 +44,7 @@ def main() -> None:
     )
     threading.Thread(target=auth_http.serve_forever, daemon=True).start()
 
-    mcp_http = mcp.build_mcp_server(
+    mcp_server = mcp.build_server(
         issuer + JWKS_PATH, issuer, host="0.0.0.0", port=mcp_port
     )
 
@@ -52,12 +52,12 @@ def main() -> None:
     sponsor_token = auth.mint_sponsor_token(audience, HUMAN_SPONSOR)
 
     print(f"authorization server : {issuer}", flush=True)
-    print(f"MCP server           : port {mcp_port} (audience {mcp.AUDIENCE})", flush=True)
+    print(f"MCP server           : :{mcp_port}/mcp (audience {mcp.AUDIENCE})", flush=True)
     print(f"registry spiffe_id   : oidc://{issuer}/{AGENT_CLIENT_ID}", flush=True)
     print(f"\nAGENT_TOKEN={agent_token}\n", flush=True)
     print(f"SUBJECT_TOKEN={sponsor_token}\n", flush=True)
 
-    mcp_http.serve_forever()
+    mcp_server.run(transport="streamable-http")
 
 
 if __name__ == "__main__":

@@ -1,64 +1,50 @@
-"""A real MCP server: JSON-RPC `tools/list` / `tools/call` over a real SQLite
-database, protected by real OAuth 2.0 bearer-token validation.
+"""A real MCP server: the official MCP Python SDK, Streamable HTTP transport,
+OAuth 2.0 resource-server protection, and a real SQLite database.
 
-This is the piece that makes the rest of the scenario honest. The repo's
-docker-compose previously pointed the gateway at `hashicorp/http-echo`, which
-returns a fixed string and never inspects the `Authorization` header -- so a
-demo against it "proved" governance while an agent that skipped the gateway
-entirely would have been served just the same.
+This is the piece that makes the rest of the scenario honest, in two ways.
 
-This server instead:
+*Transport.* An earlier version of this file accepted a bare JSON-RPC POST,
+which is not MCP — and it passed its tests only because the gateway's upstream
+adapter sent exactly that. Both were wrong in the same direction. It now runs
+on `FastMCP` with `transport="streamable-http"`, so it enforces the real
+protocol (initialize handshake, session ids, SSE framing) exactly as GitHub's
+production MCP server does.
 
-  * validates the bearer token's RS256 signature against the authorization
-    server's published JWKS,
-  * requires `aud` to be this API's own identifier -- so the agent's own
-    gateway-audience token is rejected here even though it is perfectly valid
-    at the gateway (confused-deputy prevention),
-  * requires the scope the specific tool needs,
-  * and only then runs a real parameterised SQL query.
+*Authorization.* `JwksTokenVerifier` implements the SDK's `TokenVerifier` port:
+it validates the bearer token's RS256 signature against the authorization
+server's live JWKS and requires `aud` to be this API's own identifier. That
+audience check is what makes the gateway load-bearing — the agent's own token
+is valid at the gateway and useless here. Per the MCP authorization spec
+(2025-06-18), a server MUST reject tokens not issued for it, and token
+passthrough is forbidden; the gateway satisfies this by brokering a new
+audience-scoped token (ADR-0004) rather than relaying the agent's.
 
-Because of that, removing the gateway from the path breaks the call. The
-gateway is load-bearing, and `scenario.py` demonstrates exactly that.
+The SDK also serves RFC 9728 protected-resource metadata and the
+`WWW-Authenticate` 401 challenge for us, both of which the spec requires.
 """
 
 from __future__ import annotations
 
-import json
+import contextlib
+import socket
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator
-from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import httpx
 import jwt
+import uvicorn
 from jwt import PyJWKClient
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.fastmcp import FastMCP
+from pydantic import AnyHttpUrl
 
 AUDIENCE = "https://finance-mcp.corp.net"
-
-# Each tool declares the OAuth scope required to invoke it. A token that is
-# valid but under-scoped is refused -- least privilege at the resource server,
-# not only at the gateway.
-TOOLS: dict[str, dict[str, Any]] = {
-    "read_query": {
-        "description": "Read invoice rows for a given quarter.",
-        "scope": "invoices:read",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"quarter": {"type": "string"}},
-            "required": ["quarter"],
-        },
-    },
-    "update_record": {
-        "description": "Update an invoice's status.",
-        "scope": "invoices:write",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"invoice_id": {"type": "string"}, "status": {"type": "string"}},
-            "required": ["invoice_id", "status"],
-        },
-    },
-}
+REQUIRED_SCOPE = "invoices:read"
 
 _SEED_INVOICES = [
     ("INV-1001", "ACME Corp", "Q3", 48_500.00, "open"),
@@ -95,33 +81,24 @@ class InvoiceStore:
         return {"quarter": quarter, "rows": [dict(row) for row in rows]}
 
     def update_record(self, invoice_id: str, status: str) -> dict[str, Any]:
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.execute(
-                    "UPDATE invoices SET status = ? WHERE invoice_id = ?", (status, invoice_id)
-                )
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE invoices SET status = ? WHERE invoice_id = ?", (status, invoice_id)
+            )
         if cursor.rowcount == 0:
-            raise KeyError(invoice_id)
+            raise ValueError(f"no such invoice: {invoice_id}")
         return {"invoice_id": invoice_id, "status": status, "updated": True}
 
 
-class TokenValidationError(Exception):
-    """Raised when the presented bearer token is missing, invalid, or under-scoped."""
-
-
-class BearerTokenValidator:
-    """Validates tokens against the authorization server's live JWKS."""
+class JwksTokenVerifier(TokenVerifier):
+    """Validates bearer tokens against the authorization server's live JWKS."""
 
     def __init__(self, jwks_uri: str, issuer: str, audience: str = AUDIENCE) -> None:
         self._jwks_client = PyJWKClient(jwks_uri)
         self._issuer = issuer
         self._audience = audience
 
-    def validate(self, authorization_header: str, required_scope: str) -> dict[str, Any]:
-        scheme, _, token = authorization_header.partition(" ")
-        if scheme.lower() != "bearer" or not token:
-            raise TokenValidationError("missing bearer token")
-
+    async def verify_token(self, token: str) -> AccessToken | None:
         try:
             signing_key = self._jwks_client.get_signing_key_from_jwt(token)
             claims: dict[str, Any] = jwt.decode(
@@ -132,137 +109,101 @@ class BearerTokenValidator:
                 issuer=self._issuer,
                 options={"require": ["iss", "aud", "exp"]},
             )
-        except jwt.InvalidTokenError as exc:
-            raise TokenValidationError(str(exc)) from exc
+        except jwt.InvalidTokenError:
+            # Returning None makes the SDK answer 401 with the spec-required
+            # WWW-Authenticate challenge.
+            return None
 
-        granted = str(claims.get("scope", "")).split()
-        if required_scope not in granted:
-            raise TokenValidationError(
-                f"token lacks required scope '{required_scope}' (has: {granted or 'none'})"
-            )
-        return claims
-
-
-def _make_handler(
-    store: InvoiceStore, validator: BearerTokenValidator
-) -> type[BaseHTTPRequestHandler]:
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def _respond(self, status: int, body: dict[str, Any]) -> None:
-            encoded = json.dumps(body).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-
-        def _error(self, status: int, request_id: Any, code: int, message: str) -> None:
-            self._respond(
-                status, {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
-            )
-
-        def do_POST(self) -> None:
-            length = int(self.headers.get("Content-Length", "0"))
-            try:
-                payload = json.loads(self.rfile.read(length) or b"{}")
-            except json.JSONDecodeError:
-                self._error(400, None, -32700, "Parse error")
-                return
-
-            request_id = payload.get("id")
-            method = payload.get("method")
-            authorization = self.headers.get("Authorization", "")
-
-            if method == "tools/list":
-                try:
-                    validator.validate(authorization, "invoices:read")
-                except TokenValidationError as exc:
-                    self._error(401, request_id, -32001, f"Unauthorized: {exc}")
-                    return
-                self._respond(
-                    200,
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": {
-                            "tools": [
-                                {"name": name, "description": spec["description"],
-                                 "inputSchema": spec["inputSchema"]}
-                                for name, spec in TOOLS.items()
-                            ]
-                        },
-                    },
-                )
-                return
-
-            if method != "tools/call":
-                self._error(400, request_id, -32601, f"Method not found: {method}")
-                return
-
-            params = payload.get("params") or {}
-            name = str(params.get("name") or "")
-            spec = TOOLS.get(name)
-            if spec is None:
-                self._error(400, request_id, -32602, f"Unknown tool: {name}")
-                return
-
-            try:
-                claims = validator.validate(authorization, spec["scope"])
-            except TokenValidationError as exc:
-                self._error(401, request_id, -32001, f"Unauthorized: {exc}")
-                return
-
-            arguments = params.get("arguments") or {}
-            try:
-                if name == "read_query":
-                    result = store.read_query(str(arguments.get("quarter", "")))
-                else:
-                    result = store.update_record(
-                        str(arguments["invoice_id"]), str(arguments["status"])
-                    )
-            except KeyError as exc:
-                self._error(400, request_id, -32602, f"No such invoice: {exc}")
-                return
-
-            # Echo who the resource server believes it served, from the token's
-            # own delegation claims -- not from anything the caller asserted.
-            result["_served_for"] = claims.get("sub")
-            result["_via_actor"] = (claims.get("act") or {}).get("sub")
-            self._respond(200, {"jsonrpc": "2.0", "id": request_id, "result": result})
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    return Handler
+        return AccessToken(
+            token=token,
+            client_id=str(claims.get("azp") or claims.get("sub") or ""),
+            scopes=str(claims.get("scope", "")).split(),
+            expires_at=int(claims["exp"]),
+            resource=self._audience,
+            subject=str(claims.get("sub") or ""),
+            claims=claims,
+        )
 
 
-def build_mcp_server(
+def build_server(
     jwks_uri: str,
     issuer: str,
+    audience: str = AUDIENCE,
     host: str = "127.0.0.1",
     port: int = 0,
-    audience: str = AUDIENCE,
-) -> ThreadingHTTPServer:
-    """Binds the socket and returns the server, not yet serving.
-
-    `audience` is configurable because a real IdP decides the identifier: with
-    Keycloak the downstream API's audience is its client id, not a URI we pick.
-    """
+) -> FastMCP:
+    """A real MCP server over a real database, protected by real OAuth."""
     store = InvoiceStore()
-    validator = BearerTokenValidator(jwks_uri, issuer, audience)
-    return ThreadingHTTPServer((host, port), _make_handler(store, validator))
+    server = FastMCP(
+        "finance-mcp",
+        host=host,
+        port=port,
+        token_verifier=JwksTokenVerifier(jwks_uri, issuer, audience),
+        auth=AuthSettings(
+            issuer_url=AnyHttpUrl(issuer),
+            resource_server_url=AnyHttpUrl(f"http://{host}:{port}"),
+            required_scopes=[REQUIRED_SCOPE],
+        ),
+    )
+
+    @server.tool()
+    def read_query(quarter: str) -> dict[str, Any]:
+        """Read invoice rows for a given quarter, e.g. 'Q3'."""
+        result = store.read_query(quarter)
+        # Report who the resource server believes it served, taken from the
+        # verified token's own delegation claims -- never from anything the
+        # caller asserted. `act.sub` is RFC 8693's actor claim: the gateway.
+        token = get_access_token()
+        claims = (token.claims if token else None) or {}
+        result["_served_for"] = claims.get("sub")
+        result["_via_actor"] = (claims.get("act") or {}).get("sub")
+        return result
+
+    @server.tool()
+    def update_record(invoice_id: str, status: str) -> dict[str, Any]:
+        """Update an invoice's status, e.g. invoice_id 'INV-1001', status 'paid'."""
+        return store.update_record(invoice_id, status)
+
+    return server
 
 
-@contextmanager
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+        return port
+
+
+@contextlib.contextmanager
 def run_mcp_server(jwks_uri: str, issuer: str, audience: str = AUDIENCE) -> Iterator[str]:
-    """Starts the MCP server; yields its URL."""
-    http = build_mcp_server(jwks_uri, issuer, audience=audience)
-    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    """Starts the MCP server; yields its Streamable HTTP endpoint URL.
+
+    Runs the SDK's ASGI app under our own uvicorn.Server rather than
+    FastMCP.run(), which blocks and offers no shutdown hook -- tests need to
+    reclaim the port between modules.
+    """
+    port = _free_port()
+    server = build_server(jwks_uri, issuer, audience, port=port)
+    config = uvicorn.Config(
+        server.streamable_http_app(), host="127.0.0.1", port=port, log_level="warning"
+    )
+    http = uvicorn.Server(config)
+    thread = threading.Thread(target=http.run, daemon=True)
     thread.start()
+
+    url = f"http://127.0.0.1:{port}/mcp"
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        with contextlib.suppress(httpx.HTTPError):
+            # 401 is the expected unauthenticated answer, and proves it is serving.
+            if httpx.post(url, timeout=1.0).status_code < 500:
+                break
+        time.sleep(0.1)
+    else:
+        raise RuntimeError(f"MCP server did not start on {url}")
+
     try:
-        yield f"http://127.0.0.1:{http.server_port}"
+        yield url
     finally:
-        http.shutdown()
-        thread.join()
-        http.server_close()
+        http.should_exit = True
+        thread.join(timeout=10)

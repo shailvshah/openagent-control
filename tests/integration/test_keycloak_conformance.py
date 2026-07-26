@@ -16,6 +16,7 @@ examples/enterprise_scenario/keycloak/README.md.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Iterator
 
@@ -25,8 +26,11 @@ from examples.enterprise_scenario import mcp_server as mcp
 from examples.enterprise_scenario.harness import run_gateway, run_opa, write_registry
 
 from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvider
+from openagent_control.adapters.mcp_upstream.streamable_http import StreamableHttpMCPUpstream
 from openagent_control.adapters.token_exchange.rfc8693 import Rfc8693TokenExchange
 from openagent_control.config import Settings
+from openagent_control.domain.errors import UpstreamError
+from openagent_control.domain.models import AgentIdentity, ToolCallRequest
 
 REALM_URL = os.environ.get("OAC_TEST_KEYCLOAK_URL", "")
 GATEWAY_CLIENT_ID = "openagent-control-gateway"
@@ -82,17 +86,19 @@ async def test_rfc8693_adapter_performs_a_real_keycloak_token_exchange() -> None
     finally:
         await exchange.aclose()
 
-    # Validate the brokered token exactly as a resource server would.
-    validator = mcp.BearerTokenValidator(
+    # Validate the brokered token exactly as the MCP resource server would.
+    verifier = mcp.JwksTokenVerifier(
         f"{REALM_URL}/protocol/openid-connect/certs", REALM_URL, audience=MCP_AUDIENCE
     )
-    claims = validator.validate(f"Bearer {brokered}", "invoices:read")
+    verified = await verifier.verify_token(brokered)
 
-    assert claims["aud"] == MCP_AUDIENCE
-    assert claims["azp"] == GATEWAY_CLIENT_ID
+    assert verified is not None
+    assert verified.claims is not None
+    assert verified.claims["aud"] == MCP_AUDIENCE
+    assert verified.client_id == GATEWAY_CLIENT_ID
+    assert "invoices:read" in verified.scopes
     # The agent's own token must not be usable at the downstream API.
-    with pytest.raises(mcp.TokenValidationError):
-        validator.validate(f"Bearer {agent_token()}", "invoices:read")
+    assert await verifier.verify_token(agent_token()) is None
 
 
 @pytest.fixture(scope="module")
@@ -139,19 +145,17 @@ def test_full_stack_against_keycloak(keycloak_gateway: tuple[str, str]) -> None:
         timeout=20.0,
     )
 
-    result = response.json()["result"]
-    assert len(result["rows"]) == 3
+    # A real MCP CallToolResult, over the real Streamable HTTP transport.
+    assert len(response.json()["result"]["structuredContent"]["rows"]) == 3
 
     # And the same token cannot reach the MCP server directly.
-    direct = httpx.post(
-        mcp_url,
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "read_query", "arguments": {"quarter": "Q3"}},
-        },
-        timeout=10.0,
+    bypass = ToolCallRequest(
+        method="tools/call",
+        tool_name="read_query",
+        arguments={"quarter": "Q3"},
+        agent=AgentIdentity(spiffe_id="oidc://bypass/attempt"),
+        registration=None,
+        request_id=1,
     )
-    assert direct.status_code == 401
+    with pytest.raises(UpstreamError, match="401"):
+        asyncio.run(StreamableHttpMCPUpstream(mcp_url).forward(bypass, token))

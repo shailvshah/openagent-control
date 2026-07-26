@@ -17,6 +17,8 @@ from openagent_control.adapters.identity.jwt_svid import JwtSvidIdentityProvider
 from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
 from openagent_control.adapters.ledger.postgres import PostgresLedger
+from openagent_control.adapters.mcp_upstream.http import HttpMCPUpstream
+from openagent_control.adapters.mcp_upstream.streamable_http import StreamableHttpMCPUpstream
 from openagent_control.adapters.registry.caching import CachingAgentRegistry
 from openagent_control.adapters.registry.file import FileAgentRegistry
 from openagent_control.adapters.registry.postgres import PostgresAgentRegistry
@@ -168,3 +170,19 @@ def test_entra_mode_wires_obo_exchange() -> None:
     )
 
     assert isinstance(container.token_exchange, EntraOnBehalfOfTokenExchange)
+
+
+def test_default_upstream_mode_speaks_real_mcp_transport() -> None:
+    """A real MCP server answers a bare JSON-RPC POST with 406, so the
+    Streamable HTTP adapter must be the default (ADR-0011)."""
+    container = build_container(Settings(mcp_upstream_url="http://upstream/mcp"))
+
+    assert isinstance(container.mcp_upstream, StreamableHttpMCPUpstream)
+
+
+def test_raw_jsonrpc_mode_selects_the_plain_http_adapter() -> None:
+    container = build_container(
+        Settings(mcp_upstream_url="http://upstream", mcp_upstream_mode="raw-jsonrpc")
+    )
+
+    assert isinstance(container.mcp_upstream, HttpMCPUpstream)
