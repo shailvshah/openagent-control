@@ -1,0 +1,151 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call: # the release workflow gates on exactly these checks
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  POETRY_VERSION: "2.3.2"
+  OPA_VERSION: "v1.18.2"
+
+jobs:
+  quality:
+    name: lint & types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Poetry
+        run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: poetry
+      - run: poetry install --all-extras --with examples
+
+      # black --check, ruff, mypy --strict. Any finding fails the job.
+      - run: make quality
+
+  test:
+    name: tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+
+    # Real backends, not mocks. The diagnostics tests assert things like "an
+    # un-migrated database is reported as un-migrated", which is only
+    # meaningful against a real server.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: oac
+          POSTGRES_PASSWORD: oac
+          POSTGRES_DB: oac
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oac"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      OAC_TEST_DATABASE_URL: postgresql+asyncpg://oac:oac@localhost:5432/oac
+      OAC_TEST_REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Poetry
+        run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: poetry
+      - run: poetry install --all-extras --with examples
+
+      - name: Install OPA
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            "https://openpolicyagent.org/downloads/${OPA_VERSION}/opa_linux_amd64_static"
+          chmod +x /usr/local/bin/opa
+
+      # The integration tests skip themselves when `opa` is absent rather than
+      # substituting a fake policy engine. Right locally, dangerous in CI: a
+      # green run over a silently-skipped suite is exactly the failure this
+      # project keeps finding. Fail loudly if the binary isn't there.
+      - name: Verify OPA is available (integration tests must not skip)
+        run: opa version
+
+      - name: Create the oac schema
+        run: poetry run openagent-control migrate
+        env:
+          OAC_DATABASE_URL: postgresql+asyncpg://oac:oac@localhost:5432/oac
+
+      # pytest is configured with --cov-fail-under=95, so coverage below the
+      # threshold fails the job. -rs lists every skip, so a suite that quietly
+      # stops running shows up in the log instead of passing unnoticed.
+      - name: Tests + coverage gate (95%)
+        run: poetry run pytest -rs
+
+  packaging:
+    name: packaging conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Poetry
+        run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: poetry
+      - run: poetry install --all-extras --with examples
+
+      # Builds a wheel, installs it into a clean venv, and runs it from an
+      # unrelated working directory. Every other test runs from the checkout,
+      # where policies/ and migrations/ happen to be on disk — this is the only
+      # check that catches a wheel that ships neither.
+      - name: make test-packaging
+        run: make test-packaging
+
+  scenario:
+    name: end-to-end scenario
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Poetry
+        run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: poetry
+      - run: poetry install --all-extras --with examples
+
+      - name: Install OPA
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            "https://openpolicyagent.org/downloads/${OPA_VERSION}/opa_linux_amd64_static"
+          chmod +x /usr/local/bin/opa
+
+      # Real gateway, real OPA, real RFC 8693 exchange, real MCP server over the
+      # real Streamable HTTP transport. Catches breakage the unit suite cannot,
+      # because every component in the path is genuine.
+      - name: Enterprise scenario
+        run: poetry run python -m examples.enterprise_scenario.scenario

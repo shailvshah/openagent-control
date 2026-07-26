@@ -107,6 +107,12 @@ make doctor       # verify config and dependencies
 make test-packaging  # build a wheel, install it clean, run it from elsewhere
 ```
 
+CI runs lint, strict types, tests on 3.11/3.12 against real Postgres, Redis and
+OPA, packaging conformance, and the end-to-end scenario on every push and PR;
+coverage below 95% fails the build. Releases publish to PyPI from GitHub
+Actions via Trusted Publishing (no API token) — see
+[docs/releasing.md](https://github.com/shailvshah/openagent-control/blob/main/docs/releasing.md).
+
 Requires Python 3.11+ and [Poetry](https://python-poetry.org/). The integration
 tests additionally need the `opa` binary (`brew install opa`); without it they
 skip rather than substitute a fake policy engine.
