@@ -91,3 +91,10 @@ class ExecutionReceipt(BaseModel):
     previous_hash: str
     signature: str | None = None
     """Hex-encoded Ed25519 signature; set once the receipt has been signed."""
+    enforced: bool = True
+    """False only for a shadow-mode (decision_mode="observe") DENY: the policy
+    engine's real decision, recorded and signed exactly as it would be, but not
+    what actually happened — the call was forwarded anyway. Registry-gate
+    denials (orphaned/suspended agents, ADR-0008) and fail-closed denials
+    (policy engine unreachable) are never softened by shadow mode and are
+    always enforced=True; see ADR-0012."""

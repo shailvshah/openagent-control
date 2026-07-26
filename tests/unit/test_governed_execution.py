@@ -102,6 +102,7 @@ def _service(
     exporter: RecordingExporter | None = None,
     registry: FakeRegistry | None = None,
     token_exchange: FakeTokenExchange | None = None,
+    decision_mode: str = "enforce",
 ) -> tuple[GovernedExecutionService, FakeUpstream, RecordingExporter]:
     upstream = upstream or FakeUpstream()
     exporter = exporter or RecordingExporter()
@@ -114,6 +115,7 @@ def _service(
         token_exchange=token_exchange or FakeTokenExchange(),
         mcp_upstream=upstream,
         delegated_audience="test-audience",
+        decision_mode=decision_mode,  # type: ignore[arg-type]
     )
     return service, upstream, exporter
 
@@ -266,3 +268,97 @@ async def test_upstream_failure_after_allow_returns_semantic_error() -> None:
     assert result["error"]["code"] == -32002
     assert "Do not retry" in result["error"]["data"]["instruction"]
     assert exporter.receipts[0].decision is Decision.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_forwards_a_policy_deny_but_receipts_it_unenforced() -> None:
+    """ADR-0012: the call goes through, but the audit trail records exactly what
+    enforce mode would have blocked."""
+    service, upstream, exporter = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.DENY, reason="not granted")),
+        decision_mode="observe",
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert result["result"] == "ok"  # forwarded, not blocked
+    assert upstream.credentials == [f"autonomous::{_AGENT}"]
+    receipt = exporter.receipts[0]
+    assert receipt.decision is Decision.DENY
+    assert receipt.reason == "not granted"
+    assert receipt.enforced is False
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_still_enforces_an_allow_normally() -> None:
+    service, upstream, exporter = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)), decision_mode="observe"
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert result["result"] == "ok"
+    assert upstream.credentials == [f"autonomous::{_AGENT}"]
+    assert exporter.receipts[0].enforced is True
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_does_not_soften_an_orphaned_agent_denial() -> None:
+    """The registry gate (ADR-0008) is a hard security boundary, not a policy
+    call shadow mode exists to tune — it must never be bypassed by observe mode."""
+    service, upstream, exporter = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        registry=FakeRegistry(agents={}),
+        decision_mode="observe",
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert "not registered" in result["error"]["message"]
+    assert upstream.credentials == []
+    assert exporter.receipts[0].enforced is True
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_does_not_soften_a_suspended_agent_denial() -> None:
+    service, upstream, exporter = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        registry=FakeRegistry(agents={_AGENT: _registered(status=AgentStatus.SUSPENDED)}),
+        decision_mode="observe",
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert "suspended" in result["error"]["message"]
+    assert upstream.credentials == []
+    assert exporter.receipts[0].enforced is True
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_does_not_soften_a_fail_closed_denial() -> None:
+    """A policy-engine outage is an infrastructure failure, not the kind of
+    signal shadow mode exists to observe — it must still block."""
+    service, upstream, exporter = _service(
+        FakePolicyEngine(error=PolicyEngineUnavailableError("connection refused")),
+        decision_mode="observe",
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert "error" in result
+    assert upstream.credentials == []
+    assert exporter.receipts[0].enforced is True
+
+
+@pytest.mark.asyncio
+async def test_enforce_mode_never_shadows_a_deny() -> None:
+    """decision_mode="enforce" (the default) behaves exactly as before ADR-0012."""
+    service, upstream, exporter = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.DENY, reason="nope"))
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert "error" in result
+    assert upstream.credentials == []
+    assert exporter.receipts[0].enforced is True

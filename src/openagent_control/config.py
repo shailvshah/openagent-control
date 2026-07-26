@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     then resolve it against the caller's working directory, start, report
     healthy, and fail every request with FileNotFoundError."""
 
+    decision_mode: Literal["enforce", "observe"] = "enforce"
+    """"observe" lets a policy DENY through instead of blocking it: the real
+    decision is still recorded and signed (with enforced=false), but the call
+    is forwarded upstream anyway. Exists so a first deployment can run against
+    live traffic and see what a policy WOULD block before it actually blocks
+    anything — see ADR-0012. Registry-gate denials (orphaned/suspended agents)
+    and fail-closed denials (policy engine unreachable) are never softened by
+    this setting; only an explicit OPA DENY is."""
+
     delegated_audience: str = "openagent-control-mcp-upstream"
     """OAuth audience requested in token exchanges for delegated (OBO) calls.
     For Entra this maps to the scope parameter (e.g. "api://<app-id>/.default")."""

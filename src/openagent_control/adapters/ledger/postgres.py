@@ -37,7 +37,12 @@ class PostgresLedger:
         return self._signer.public_key()
 
     async def record(
-        self, agent: AgentIdentity, request: ToolCallRequest, decision: PolicyDecision
+        self,
+        agent: AgentIdentity,
+        request: ToolCallRequest,
+        decision: PolicyDecision,
+        *,
+        enforced: bool = True,
     ) -> ExecutionReceipt:
         payload_hash = hashlib.sha256(canonical_json(request.model_dump(mode="json"))).hexdigest()
 
@@ -55,6 +60,7 @@ class PostgresLedger:
                 reason=decision.reason,
                 payload_hash=payload_hash,
                 previous_hash=chain_state.previous_hash,
+                enforced=enforced,
             )
             unsigned_bytes = canonical_json(receipt.model_dump(mode="json", exclude={"signature"}))
             signature = self._signer.sign(unsigned_bytes)
@@ -70,6 +76,7 @@ class PostgresLedger:
                     payload_hash=receipt.payload_hash,
                     previous_hash=receipt.previous_hash,
                     signature=receipt.signature,
+                    enforced=receipt.enforced,
                 )
             )
             chain_state.previous_hash = hashlib.sha256(unsigned_bytes + signature).hexdigest()

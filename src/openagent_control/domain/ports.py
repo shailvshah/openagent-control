@@ -57,7 +57,12 @@ class Ledger(Protocol):
     """Appends a hash-chained, signed audit receipt. See ADR-0003."""
 
     async def record(
-        self, agent: AgentIdentity, request: ToolCallRequest, decision: PolicyDecision
+        self,
+        agent: AgentIdentity,
+        request: ToolCallRequest,
+        decision: PolicyDecision,
+        *,
+        enforced: bool = True,
     ) -> ExecutionReceipt: ...
 
 

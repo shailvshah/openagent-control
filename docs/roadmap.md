@@ -1,8 +1,36 @@
 # Roadmap: 7-Month Enterprise Rollout vs. Current State
 
-Status assessed 2026-07-25 against the v1 foundation (see [design.md](design.md),
+Status assessed 2026-07-26 against the v1 foundation (see [design.md](design.md),
 [ADRs](adr/README.md)). "Seam exists" means the port/interface is declared per
 ADR-0006 so the work is additive, not architectural.
+
+## Distribution (new since the last assessment, not part of the 5-phase plan)
+
+`pip install openagent-control` and `docker compose up` are both real and
+conformance-tested (`tests/integration/test_packaging.py` builds a wheel,
+installs it into a clean venv, and runs it from an unrelated working
+directory). `openagent-control doctor` / `GET /readyz` share one
+implementation so neither can bless a deployment the other refuses. CI
+enforces lint, strict types, a 95% coverage gate, packaging conformance and
+the end-to-end scenario against real Postgres/Redis/OPA on every push; release
+publishes to PyPI via Trusted Publishing on a tag. See
+[deployment.md](deployment.md) and [releasing.md](releasing.md).
+
+## Scope decisions from the external-readiness audit (2026-07-26)
+
+- **SAML is out of scope, not a gap.** The identity design (ADR-0005, ADR-0007,
+  ADR-0010) is SPIFFE + OIDC/OAuth2. Every enterprise IdP that matters here
+  (Okta, Entra ID, Keycloak, Auth0, PingFederate) speaks OIDC, and
+  `OidcJwksIdentityProvider` already covers it — conformance-tested against a
+  real Keycloak realm. Building a SAML assertion adapter would add real attack
+  surface (XML signature validation is a notorious source of auth bypasses)
+  for a protocol the industry is moving away from, with no identified IdP that
+  actually requires it. Revisit only if a specific integration needs it.
+- **A self-hosted control-plane API + read-only dashboard is in scope**,
+  separate from the enforcing gateway: registry CRUD, receipt search/verify,
+  fleet health. Same self-hosted posture as the gateway (ADR discussion,
+  2026-07-25) — the vendor never holds the token-exchange secret or sits in
+  the customer's data path. Not started; tracked below.
 
 ## Where we are, phase by phase
 
@@ -18,30 +46,41 @@ ADR-0006 so the work is additive, not architectural.
 
 In dependency order — each unblocks the phase next to it:
 
-1. **Shadow mode toggle** (small: a `Settings.decision_mode` consumed by
+1. **External-sharing hygiene** (in progress, 2026-07-26): `SECURITY.md` and
+   `CONTRIBUTING.md` — publishing something that asks to be trusted with
+   credentials and audit evidence without a vulnerability-disclosure path is a
+   real gap, not cosmetic.
+2. **Shadow mode toggle** (small: a `Settings.decision_mode` consumed by
    `GovernedExecutionService`; DENY decisions are receipted but the call forwards).
    Without it, Phase 2's "observe first, enforce later" sequencing is impossible and
    day-one deployment blocks production traffic.
-2. ~~Agent Registry as data, not code~~ — **done** (ADR-0008): `registry/agents.yaml`
+3. ~~Agent Registry as data, not code~~ — **done** (ADR-0008): `registry/agents.yaml`
    is the source of truth; Rego holds only logic; orphans are receipted DENYs.
-3. ~~Real identity adapters~~ — **largely done**: Okta (RFC 8693) and Entra (OBO)
+4. ~~Real identity adapters~~ — **largely done**: Okta (RFC 8693) and Entra (OBO)
    token-exchange adapters, JWT-SVID validation, and now `OidcJwksIdentityProvider`
    (ADR-0010, validates real Okta/Entra access tokens via JWKS) all ship behind
    settings. Remaining: a SPIRE deployment itself (x509 Workload API attestation),
    trust-bundle/JWKS rotation cadence tuning, and tenant-independent Entra
    multi-tenant validation; the header mode remains dev-only per ADR-0005.
-4. **OTel wiring** — Phase 2's whole purpose is telemetry; the dependency is in
+5. **OTel wiring** — Phase 2's whole purpose is telemetry; the dependency is in
    `pyproject.toml` but no spans are emitted.
-5. ~~Signing key custody + shared chain state~~ — **shared chain state done**
-   (ADR-0009): `PostgresLedger` persists receipts and serializes the chain head
-   with a row lock, correct across replicas and restarts. **Key custody remains
-   open**: `ReceiptSigner` accepts an injected key, but nothing yet sources one
-   from a KMS/HSM — still the blocker for receipts as compliance evidence.
-6. **Admin/kill-switch API** — newly enabled, not yet built: registry status is a
-   database row now (was a git file), so an operator surface that flips it is a
-   small addition, not an architecture change. Until it exists, suspending an
-   agent still means editing `oac.agents` directly, with revocation visible to the
-   gateway within one cache TTL (default 30s).
+6. **Signing key custody** — shared chain state is done (ADR-0009):
+   `PostgresLedger` persists receipts and serializes the chain head with a row
+   lock, correct across replicas and restarts. **Key custody remains open**:
+   `ReceiptSigner` accepts an injected key, but nothing yet sources one from a
+   KMS/HSM — this is the single biggest gap between "signed receipt" and
+   "compliance-grade evidence," and the top priority of the current pass.
+7. **Control-plane API + dashboard** (scoped 2026-07-26, not started): a
+   separate, self-hosted service — registry CRUD, receipt search/verify, fleet
+   health — backed by the same Postgres. Deliberately not merged into the
+   enforcing gateway; it has different auth requirements (an operator identity,
+   not a workload identity) and a compromise there must not be a path to
+   forging receipts or bypassing policy. Subsumes the "admin/kill-switch API"
+   item from the previous assessment: registry status is a database row now
+   (was a git file), so an operator surface that flips it is additive, not an
+   architecture change. Until it exists, suspending an agent means editing
+   `oac.agents` directly, with revocation visible to the gateway within one
+   cache TTL (default 30s).
 
 ## Honest framing
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Literal, NoReturn
 
 from fastapi import Request
 
@@ -56,6 +56,7 @@ class Container:
     token_exchange: TokenExchange
     mcp_upstream: MCPUpstream
     delegated_audience: str = "openagent-control-mcp-upstream"
+    decision_mode: Literal["enforce", "observe"] = "enforce"
     db_engine: AsyncEngine | None = None
     redis_client: Redis | None = None
     governed_execution: GovernedExecutionService = field(init=False)
@@ -70,6 +71,7 @@ class Container:
             token_exchange=self.token_exchange,
             mcp_upstream=self.mcp_upstream,
             delegated_audience=self.delegated_audience,
+            decision_mode=self.decision_mode,
         )
 
     async def aclose(self) -> None:
@@ -202,6 +204,7 @@ def build_container(settings: Settings) -> Container:
         token_exchange=token_exchange,
         mcp_upstream=_mcp_upstream(settings),
         delegated_audience=settings.delegated_audience,
+        decision_mode=settings.decision_mode,
         db_engine=db_engine,
         redis_client=redis_client,
     )

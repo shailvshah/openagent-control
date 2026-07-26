@@ -17,7 +17,7 @@ Failure posture:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from openagent_control.domain.errors import (
     MissingSubjectTokenError,
@@ -60,6 +60,7 @@ class GovernedExecutionService:
         token_exchange: TokenExchange,
         mcp_upstream: MCPUpstream,
         delegated_audience: str,
+        decision_mode: Literal["enforce", "observe"] = "enforce",
     ) -> None:
         self._identity_provider = identity_provider
         self._agent_registry = agent_registry
@@ -69,6 +70,7 @@ class GovernedExecutionService:
         self._token_exchange = token_exchange
         self._mcp_upstream = mcp_upstream
         self._delegated_audience = delegated_audience
+        self._decision_mode = decision_mode
 
     async def execute(self, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
         """Runs one governed tool call; returns a JSON-RPC response object.
@@ -90,27 +92,45 @@ class GovernedExecutionService:
         )
 
         # Registry gate (ADR-0008): orphaned or suspended agents never reach the
-        # policy engine, but the attempt is still receipted below.
+        # policy engine, but the attempt is still receipted below. This is a
+        # hard security boundary, not a policy call — decision_mode="observe"
+        # never softens it (ADR-0012).
+        shadowable = True
         if registration is None:
             decision = PolicyDecision(
                 decision=Decision.DENY,
                 reason="Agent not registered in the Agent Registry (orphaned agents are refused)",
             )
+            shadowable = False
         elif registration.status is not AgentStatus.ACTIVE:
             decision = PolicyDecision(
                 decision=Decision.DENY,
                 reason=f"Agent is {registration.status.value} in the Agent Registry",
             )
+            shadowable = False
         else:
             try:
                 decision = await self._policy_engine.evaluate(call)
             except PolicyEngineUnavailableError:
+                # An outage of the policy engine is an infrastructure failure,
+                # not a policy signal shadow mode exists to observe — always
+                # enforced, same as the registry gate above.
                 decision = PolicyDecision(decision=Decision.DENY, reason=_FAIL_CLOSED_REASON)
+                shadowable = False
 
-        receipt = await self._ledger.record(agent, call, decision)
+        # Only an explicit OPA DENY can be shadowed: recorded and signed as a
+        # real DENY, but not actually blocked, so a first deployment can watch
+        # what a policy WOULD reject before it starts rejecting anything.
+        shadow = (
+            shadowable
+            and self._decision_mode == "observe"
+            and decision.decision is not Decision.ALLOW
+        )
+
+        receipt = await self._ledger.record(agent, call, decision, enforced=not shadow)
         await self._audit_exporter.export(receipt)
 
-        if decision.decision is not Decision.ALLOW:
+        if decision.decision is not Decision.ALLOW and not shadow:
             return _jsonrpc_error(
                 call.request_id,
                 code=-32000,

@@ -91,3 +91,31 @@ async def test_public_key_matches_signer(
     ledger = PostgresLedger(session_factory, signer)
 
     assert ledger.public_key().public_bytes_raw() == signer.public_key().public_bytes_raw()
+
+
+@pytest.mark.asyncio
+async def test_enforced_flag_defaults_true_and_is_persisted(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from sqlalchemy import select
+
+    from openagent_control.adapters.db.tables import ReceiptRow
+
+    ledger = PostgresLedger(session_factory, ReceiptSigner())
+    agent = AgentIdentity(spiffe_id="spiffe://corp.net/ns/finance/agent/invoice-bot")
+
+    default = await ledger.record(agent, _call(), PolicyDecision(decision=Decision.ALLOW))
+    shadow = await ledger.record(
+        agent, _call(), PolicyDecision(decision=Decision.DENY, reason="not granted"), enforced=False
+    )
+
+    assert default.enforced is True
+    assert shadow.enforced is False
+
+    async with session_factory() as session:
+        rows = {
+            row.sequence_id: row.enforced
+            for row in (await session.execute(select(ReceiptRow))).scalars().all()
+        }
+    assert rows[default.sequence_id] is True
+    assert rows[shadow.sequence_id] is False

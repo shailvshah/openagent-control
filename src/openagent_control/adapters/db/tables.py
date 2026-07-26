@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import JSON, DateTime, Integer, MetaData, String
+from sqlalchemy import JSON, Boolean, DateTime, Integer, MetaData, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 SCHEMA = "oac"
@@ -55,6 +55,9 @@ class ReceiptRow(Base):
     payload_hash: Mapped[str] = mapped_column(String, nullable=False)
     previous_hash: Mapped[str] = mapped_column(String, nullable=False)
     signature: Mapped[str] = mapped_column(String, nullable=False)
+    enforced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    """False for a shadow-mode (decision_mode="observe") DENY that was recorded
+    but not actually blocked. See ADR-0012."""
 
 
 class ChainStateRow(Base):

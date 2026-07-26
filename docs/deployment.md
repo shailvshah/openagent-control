@@ -114,6 +114,7 @@ Every setting is an `OAC_`-prefixed environment variable — see
 | `OAC_DATABASE_URL` | unset | Postgres; requires the `persistence` extra **and** `migrate` |
 | `OAC_REDIS_URL` | unset | Cache only, no schema |
 | `OAC_TOKEN_EXCHANGE_MODE` | `stub` | `rfc8693` (Okta/Keycloak) or `entra` |
+| `OAC_DECISION_MODE` | `enforce` | `observe` forwards a policy DENY instead of blocking it, and receipts it with `enforced=false` — see [ADR-0012](adr/0012-shadow-mode-for-first-deployment.md). For a first production rollout, before trusting a policy to actually block anything. |
 
 ## Verifying a release
 

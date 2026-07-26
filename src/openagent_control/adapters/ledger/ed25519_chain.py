@@ -35,7 +35,12 @@ class Ed25519ChainLedger:
         return self._signer.public_key()
 
     async def record(
-        self, agent: AgentIdentity, request: ToolCallRequest, decision: PolicyDecision
+        self,
+        agent: AgentIdentity,
+        request: ToolCallRequest,
+        decision: PolicyDecision,
+        *,
+        enforced: bool = True,
     ) -> ExecutionReceipt:
         payload_hash = hashlib.sha256(canonical_json(request.model_dump(mode="json"))).hexdigest()
 
@@ -47,6 +52,7 @@ class Ed25519ChainLedger:
                 reason=decision.reason,
                 payload_hash=payload_hash,
                 previous_hash=self._previous_hash,
+                enforced=enforced,
             )
             unsigned_bytes = canonical_json(receipt.model_dump(mode="json", exclude={"signature"}))
             signature = self._signer.sign(unsigned_bytes)
