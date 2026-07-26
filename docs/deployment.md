@@ -149,6 +149,9 @@ Every setting is an `OAC_`-prefixed environment variable — see
 | `OAC_DATABASE_URL` | unset | Postgres; requires the `persistence` extra **and** `migrate` |
 | `OAC_REDIS_URL` | unset | Cache only, no schema |
 | `OAC_TOKEN_EXCHANGE_MODE` | `stub` | `rfc8693` (Okta/Keycloak) or `entra` |
+| `OAC_SUBJECT_VERIFICATION_MODE` | `off` | `oidc-jwks` verifies the human's own token on a delegated call and exposes their id/roles/scopes to policy, so a rule can require the **acting user** to be entitled, not just the agent. See [ADR-0019](adr/0019-sponsorship-is-approval-authorization-comes-from-the-user.md). |
+| `OAC_SUBJECT_ROLE_CLAIM` | `roles` | Which claim carries the user's roles — Entra `roles`, Okta a custom `groups` claim, Keycloak `realm_access.roles` (dotted path). Not a standard OIDC claim. |
+| `OAC_SUBJECT_BINDING` | `strict` | How firmly the subject token must tie to the caller. `strict` honours RFC 8693 `may_act`, else requires issuer-scoped subject equality. **`may-act-only` is required on an IdP using pairwise subject identifiers**, where the same human legitimately has a different `sub` per client and equality would reject valid calls. `off` verifies the token but checks no relationship. |
 | `OAC_DECISION_MODE` | `enforce` | `observe` forwards a policy DENY instead of blocking it, and receipts it with `enforced=false` — see [ADR-0012](adr/0012-shadow-mode-for-first-deployment.md). For a first production rollout, before trusting a policy to actually block anything. |
 | `OAC_SIGNING_KEY_MODE` | `in-process` | `vault-transit` signs receipts via HashiCorp Vault (`OAC_VAULT_URL`, `OAC_VAULT_TOKEN`, `OAC_VAULT_TRANSIT_KEY_NAME`) — the private key never leaves Vault. See [ADR-0013](adr/0013-vault-transit-signing-key-custody.md); `in-process` is a dev-grade default, not compliance-grade custody. |
 | `OAC_OTEL_ENABLED` | `false` | Emits spans through the governed-execution path (identify, registry lookup, policy evaluate, credential broker, forward) via OTLP/HTTP. Off by default: instrumentation always runs (a no-op tracer costs nothing), only exporting is opt-in. |
@@ -181,6 +184,27 @@ compromise here has no path to those. It also never holds anything capable of
 signing a receipt, only the public key, and never writes
 `oac.execution_receipts` — see the ADR for the full security-boundary
 reasoning.
+
+### Authorizing on the acting user, not just the agent
+
+```bash
+export OAC_SUBJECT_VERIFICATION_MODE=oidc-jwks
+export OAC_SUBJECT_ROLE_CLAIM=realm_access.roles     # Keycloak; see the table above
+```
+
+`human_sponsor` records *who approved* an agent acting — accountability, not
+permission. With this on, the human's own token is verified (JWKS, `iss`,
+`aud`, `exp`) and policy gains `input.subject` = `{id, roles, scopes}`, so a
+rule can require the intersection of what the agent is granted **and** what the
+user is entitled to. `input.subject` is `null` for autonomous calls — write
+that case explicitly, because in Rego `not "x" in null.roles` is *undefined*
+rather than true and the rule silently will not fire. The shipped
+`mcp_authz.rego` carries a commented example.
+
+**Breaking change with `identity_mode=oidc-jwks`**: `human_sponsor` is now
+`{issuer}#{sub}` rather than a bare `sub`, because OIDC Core §5.7 makes `sub`
+unique only within an issuer. Update any Rego rule or receipt query matching
+the old value.
 
 ### Vault-backed receipt signing
 

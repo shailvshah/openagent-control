@@ -24,7 +24,6 @@ from jwt import PyJWKClient
 from openagent_control.domain.errors import IdentityError
 from openagent_control.domain.models import AgentIdentity
 
-_SPONSOR_HEADER = "x-human-sponsor"
 _ALGORITHMS = ["RS256"]
 # Claims that identify the calling application/service principal, checked in
 # order — see ADR-0010 on why this isn't simply `sub`.
@@ -98,11 +97,23 @@ class OidcJwksIdentityProvider:
                 f"token has none of the expected client-id claims {_CLIENT_ID_CLAIMS}"
             )
 
-        human_sponsor = str(claims["sub"]) if _has_human_sponsor(claims, client_id) else None
+        # Issuer-scoped, like the spiffe_id below: OIDC Core §5.7 says `sub`
+        # is only locally unique within an issuer, so a bare `sub` would hold
+        # human identity to a weaker standard than workload identity and would
+        # collide across federated issuers (ADR-0019).
+        human_sponsor = (
+            f"{self._issuer}#{claims['sub']}" if _has_human_sponsor(claims, client_id) else None
+        )
 
+        # No X-Human-Sponsor fallback here, deliberately. Trusting a header to
+        # name the human would let an autonomous agent assert it acts for
+        # anyone, which is a dev-stub property (ADR-0005) that has no business
+        # in the production identity path. The header remains honoured by
+        # HeaderIdentityProvider, where the whole identity is already a stub.
         return AgentIdentity(
             spiffe_id=f"oidc://{self._issuer}/{client_id}",
-            human_sponsor=human_sponsor or headers.get(_SPONSOR_HEADER),
+            human_sponsor=human_sponsor,
+            client_id=client_id,
         )
 
     def _verify(self, token: str) -> dict[str, object]:

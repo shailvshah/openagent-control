@@ -21,6 +21,7 @@ from openagent_control.domain.models import (
     ExecutionReceipt,
     PolicyDecision,
     RegisteredAgent,
+    SubjectIdentity,
     ToolCallRequest,
 )
 
@@ -44,6 +45,23 @@ class IdentityProvider(Protocol):
     """
 
     async def identify(self, raw_headers: dict[str, str]) -> AgentIdentity: ...
+
+
+@runtime_checkable
+class SubjectVerifier(Protocol):
+    """Verifies the human subject token on a delegated call. See ADR-0019.
+
+    Separate from IdentityProvider (which answers "what workload is calling")
+    and from OperatorIdentity (which answers "may this human operate the
+    control plane"). This one answers "who is this call actually running as,
+    and what are they entitled to" — the authorization principal behind a
+    delegated call, as opposed to the sponsor, which is only an approval.
+
+    Raises IdentityError when the token is absent, invalid, or does not belong
+    to the sponsor the agent claimed.
+    """
+
+    async def verify(self, subject_token: str) -> SubjectIdentity: ...
 
 
 @runtime_checkable

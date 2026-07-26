@@ -123,9 +123,13 @@ async def test_okta_style_cid_claim_is_used_when_azp_absent(
 
 
 @pytest.mark.asyncio
-async def test_delegated_token_surfaces_sub_as_human_sponsor(
+async def test_delegated_token_surfaces_an_issuer_scoped_human_sponsor(
     idp_server: tuple[_IdpFixture, rsa.RSAPrivateKey],
 ) -> None:
+    """Issuer-scoped, not a bare `sub`: OIDC Core §5.7 makes `sub` unique only
+    within an issuer, so a bare value collides across federated issuers and
+    holds human identity to a weaker standard than the workload's own
+    issuer-scoped spiffe_id (ADR-0019)."""
     idp, key = idp_server
     provider = OidcJwksIdentityProvider(idp.discovery_url, audience=idp.audience)
     token = _token(key, idp, {"azp": "agent-client-id", "sub": "alice@corp.net"})
@@ -133,7 +137,26 @@ async def test_delegated_token_surfaces_sub_as_human_sponsor(
     agent = await provider.identify({"Authorization": f"Bearer {token}"})
 
     assert agent.spiffe_id == f"oidc://{idp.issuer}/agent-client-id"
-    assert agent.human_sponsor == "alice@corp.net"
+    assert agent.human_sponsor == f"{idp.issuer}#alice@corp.net"
+    assert agent.client_id == "agent-client-id"
+
+
+@pytest.mark.asyncio
+async def test_an_unverified_sponsor_header_is_ignored_in_production_identity_mode(
+    idp_server: tuple[_IdpFixture, rsa.RSAPrivateKey],
+) -> None:
+    """An autonomous agent must not be able to claim it acts for a human by
+    setting a header. This adapter used to fall back to X-Human-Sponsor, which
+    is a dev-stub property (ADR-0005) with no place in the production path."""
+    idp, key = idp_server
+    provider = OidcJwksIdentityProvider(idp.discovery_url, audience=idp.audience)
+    token = _token(key, idp, {"azp": "okta-client-id", "sub": "okta-client-id"})
+
+    agent = await provider.identify(
+        {"Authorization": f"Bearer {token}", "X-Human-Sponsor": "ceo@corp.net"}
+    )
+
+    assert agent.human_sponsor is None
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,57 @@ class AgentIdentity(BaseModel):
 
     spiffe_id: str
     human_sponsor: str | None = None
-    """OIDC subject of the human this agent is acting on behalf of, if any."""
+    """Who approved this agent acting — an *accountability* signal, never an
+    entitlement. What the call may actually do comes from `SubjectIdentity`,
+    verified from the user's own token (ADR-0019). Issuer-scoped as
+    `{issuer}#{sub}` when derived from a real OIDC token, for the reason given
+    on SubjectIdentity.subject_id."""
+    client_id: str | None = None
+    """The agent's OAuth client id, when identity came from an OIDC token.
+    Held separately rather than re-parsed out of `spiffe_id`: RFC 8693's
+    `may_act` binding compares against it, and reconstructing it from a
+    formatted string would break the moment that format changed."""
+
+
+class SubjectIdentity(BaseModel):
+    """The human a delegated call runs under, from their **verified** token.
+
+    Distinct from `AgentIdentity.human_sponsor`, which is an *approval*: a
+    claim that some human signed off on this agent acting. Sponsorship answers
+    "who is accountable"; this answers "what is actually permitted", and the
+    two must not be conflated — an approval is not an entitlement. This is
+    RFC 8693's delegation model, not impersonation: the agent keeps its own
+    identity and acts *for* the user, so authorization must come from the
+    user's own verified claims rather than from anything the agent asserted.
+
+    Deliberately a curated projection rather than the raw claim set: policy
+    input, and any decision log OPA produces from it, should not carry a
+    user's whole token. Add a field when a rule genuinely needs it (ADR-0019).
+    """
+
+    subject_id: str
+    """The authorization principal, as `{issuer}#{sub}`.
+
+    Issuer-scoped because `sub` alone is not an identifier: OIDC Core §5.7
+    states the only guaranteed unique identifier for an end-user is the `iss`
+    and `sub` pair, since `sub` is only locally unique within an issuer. The
+    agent's own `spiffe_id` is already issuer-scoped for the same reason; a
+    bare `sub` would hold human identity to a weaker standard than workload
+    identity, and would collide across federated issuers."""
+    issuer: str
+    username: str | None = None
+    """`preferred_username`/`email` where present — **display only**. OIDC Core
+    §5.7 says these MUST NOT be used as unique identifiers: they are mutable
+    and reassignable. Never authorize on this field; use `subject_id`."""
+    roles: list[str] = Field(default_factory=list)
+    """From the configured role claim. Not a standard OIDC claim — every
+    provider spells it differently (ADR-0019)."""
+    scopes: list[str] = Field(default_factory=list)
+    """OAuth scopes the user's own token carries (RFC 9068 `scope`)."""
+    authorized_actor: str | None = None
+    """`may_act.sub` — RFC 8693's claim asserting which party the user has
+    authorized to act for them. Kept off the policy input on purpose: it is
+    an input to the gateway's own binding check, not a user entitlement."""
 
 
 class AgentStatus(str, Enum):
@@ -66,6 +116,11 @@ class ToolCallRequest(BaseModel):
     registration: RegisteredAgent | None = None
     """The agent's registry record, attached by the gateway before policy
     evaluation so the policy engine reasons over registry facts (ADR-0008)."""
+    subject: SubjectIdentity | None = None
+    """The verified human this call runs on behalf of, when subject
+    verification is enabled and the call is delegated (ADR-0019). None for an
+    autonomous call, or when verification is off — policy must therefore treat
+    "no subject" as "no user entitlements to draw on", never as "unrestricted"."""
     request_id: str | int | None = None
 
 

@@ -35,20 +35,10 @@ import httpx
 import jwt
 from jwt import PyJWKClient
 
+from openagent_control.adapters.claims import resolve_dotted_claim
 from openagent_control.domain.errors import IdentityError
 
 _ALGORITHMS = ["RS256"]
-
-
-def _resolve_dotted_claim(claims: dict[str, object], dotted_path: str) -> object:
-    """Walks a dotted claim path (e.g. "realm_access.roles") through nested
-    dicts. Returns None if any segment is missing or not a dict along the way."""
-    value: object = claims
-    for segment in dotted_path.split("."):
-        if not isinstance(value, dict) or segment not in value:
-            return None
-        value = value[segment]
-    return value
 
 
 class OidcOperatorAuth:
@@ -92,7 +82,7 @@ class OidcOperatorAuth:
         except jwt.InvalidTokenError as exc:
             raise IdentityError(f"invalid OIDC access token: {exc}") from exc
 
-        roles = _resolve_dotted_claim(claims, self._role_claim)
+        roles = resolve_dotted_claim(claims, self._role_claim)
         if isinstance(roles, str):
             roles = [roles]
         if not isinstance(roles, list) or self._required_role not in roles:

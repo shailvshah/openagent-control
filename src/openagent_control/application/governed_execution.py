@@ -22,6 +22,7 @@ from typing import Any, Literal
 from opentelemetry import trace
 
 from openagent_control.domain.errors import (
+    IdentityError,
     MissingSubjectTokenError,
     PolicyEngineUnavailableError,
     TokenExchangeError,
@@ -33,6 +34,7 @@ from openagent_control.domain.models import (
     AuthorizationOutcome,
     Decision,
     PolicyDecision,
+    SubjectIdentity,
     ToolCallRequest,
 )
 from openagent_control.domain.ports import (
@@ -42,6 +44,7 @@ from openagent_control.domain.ports import (
     Ledger,
     MCPUpstream,
     PolicyEngine,
+    SubjectVerifier,
     TokenExchange,
 )
 
@@ -69,6 +72,8 @@ class GovernedExecutionService:
         mcp_upstream: MCPUpstream,
         delegated_audience: str,
         decision_mode: Literal["enforce", "observe"] = "enforce",
+        subject_verifier: SubjectVerifier | None = None,
+        subject_binding: Literal["strict", "may-act-only", "off"] = "strict",
     ) -> None:
         self._identity_provider = identity_provider
         self._agent_registry = agent_registry
@@ -79,6 +84,8 @@ class GovernedExecutionService:
         self._mcp_upstream = mcp_upstream
         self._delegated_audience = delegated_audience
         self._decision_mode = decision_mode
+        self._subject_verifier = subject_verifier
+        self._subject_binding = subject_binding
 
     async def authorize(
         self, headers: dict[str, str], payload: dict[str, Any]
@@ -163,6 +170,18 @@ class GovernedExecutionService:
         if call.tool_name:
             root_span.set_attribute("tool.name", call.tool_name)
 
+        # The user's own entitlements, resolved before policy so a rule can
+        # reason about them (ADR-0019). Sponsorship is an approval; this is
+        # the authorization principal, and only this is verified.
+        if self._subject_verifier is not None and agent.human_sponsor:
+            with _tracer.start_as_current_span("verify_subject"):
+                subject = await self._subject_verifier.verify(
+                    {k.lower(): v for k, v in headers.items()}.get(_SUBJECT_TOKEN_HEADER, "")
+                )
+                _bind_subject(agent, subject, self._subject_binding)
+                call.subject = subject
+            root_span.set_attribute("subject.id", subject.subject_id)
+
         # Registry gate (ADR-0008): orphaned or suspended agents never reach
         # the policy engine, but the attempt is still receipted below. This
         # is a hard security boundary, not a policy call —
@@ -243,6 +262,54 @@ class GovernedExecutionService:
         if scheme.lower() != "bearer" or not agent_token:
             return f"autonomous::{agent.spiffe_id}"
         return await self._token_exchange.exchange(agent_token, self._delegated_audience)
+
+
+def _bind_subject(
+    agent: AgentIdentity, subject: SubjectIdentity, mode: Literal["strict", "may-act-only", "off"]
+) -> None:
+    """Checks that the verified user actually authorized *this* agent.
+
+    Without a binding, an agent holding any user's valid subject token could
+    present it while claiming a different sponsor: the IdP would mint a real
+    credential for that user, and the receipt would attribute the call to
+    someone else. The IdP rejects forged tokens, so this is not about forgery —
+    it is about attribution and blast radius.
+
+    Two mechanisms, preferred in order:
+
+    1. **RFC 8693 `may_act`** — the spec's own way for a subject token to name
+       the party authorized to act for that user. When the IdP issues it, it is
+       authoritative and is checked against the agent's client id.
+    2. **Issuer-scoped subject equality** — a fallback for the many IdPs that
+       do not issue `may_act` at all.
+
+    The fallback is skippable (`may-act-only`) because it is *not* universally
+    sound: with pairwise subject identifiers, the same human legitimately has a
+    different `sub` in the agent's token than in the subject token, since the
+    value is derived per client. Enforcing equality there would reject valid
+    delegated calls, so an operator on a pairwise tenant needs a way out that
+    isn't "turn binding off entirely".
+    """
+    if mode == "off":
+        return
+
+    if subject.authorized_actor is not None:
+        if agent.client_id and subject.authorized_actor != agent.client_id:
+            raise IdentityError(
+                f"subject token authorizes '{subject.authorized_actor}' to act, "
+                f"but the caller is '{agent.client_id}' (RFC 8693 may_act mismatch)"
+            )
+        return
+
+    if mode == "may-act-only":
+        return
+
+    if agent.human_sponsor and subject.subject_id != agent.human_sponsor:
+        raise IdentityError(
+            "subject token does not belong to the sponsor this call claims "
+            f"('{agent.human_sponsor}'). If this IdP uses pairwise subject "
+            "identifiers, set OAC_SUBJECT_BINDING=may-act-only."
+        )
 
 
 def _filter_listing(response: dict[str, Any], call: ToolCallRequest) -> dict[str, Any]:

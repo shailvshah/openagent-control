@@ -1,173 +1,293 @@
 # User Journeys
 
-Four people touch `openagent-control` in practice, each for a different reason.
-This maps what each of them actually does, in what order, against what's real
-in the codebase today (see [roadmap.md](roadmap.md) for what's stubbed vs.
-production-grade).
+What each person actually does, in order, against what is real in the codebase
+today. See [roadmap.md](roadmap.md) for what is still stubbed, and
+[adr/](adr/README.md) for why each decision was made.
 
-1. [Agent developer](#1-agent-developer) — wants their agent's tool calls governed, with minimal glue code
-2. [Platform/security engineer](#2-platformsecurity-engineer) — deploys and configures the gateway for an org
-3. [Registry operator](#3-registry-operator) — day-to-day: onboard, suspend, review agents
-4. [Compliance / audit reviewer](#4-compliance--audit-reviewer) — proves after the fact what happened
+- [Day 0 — 10 minutes to your first governed call](#day-0--10-minutes-to-your-first-governed-call)
+- [Day 1 — govern an agent that already runs in production](#day-1--govern-an-agent-that-already-runs-in-production)
+- [Day 2 — stand it up for the org](#day-2--stand-it-up-for-the-org)
+- [Day N — operate it: inventory, access, audit](#day-n--operate-it-inventory-access-audit)
+- [The compliance reviewer's job](#the-compliance-reviewers-job)
+- [What is real vs. still a stub](#what-is-real-vs-still-a-stub)
 
 ---
 
-## 1. Agent developer
+## Day 0 — 10 minutes to your first governed call
 
-**Goal:** point an existing agent's tool calls through the gateway instead of
-straight at the target system, without rewriting the agent.
+No cloud tenant, no API keys, no IdP.
 
-1. Read the [LangGraph example](../examples/langgraph_governed_agent/README.md)
-   to see the shape of the integration — the agent's tool-calling node sends a
-   normal JSON-RPC `tools/call` to `POST /mcp/v1` instead of invoking the tool
-   directly. No SDK to install; it's an HTTP call with an access token.
-2. Run the [full enterprise scenario](../examples/enterprise_scenario/README.md)
-   to see what the control plane is actually buying you, end to end:
+```bash
+pip install openagent-control
+openagent-control init ./oac              # starter registry + Rego policy
+export OAC_REGISTRY_PATH=./oac/agents.yaml
+opa run --server ./oac/policies &
+openagent-control doctor                  # exits non-zero if it would not serve
+openagent-control serve
+```
+
+`doctor` runs exactly the checks `GET /readyz` runs, so the CLI cannot bless a
+deployment the load balancer then refuses.
+
+Then govern a function you already have:
+
+```python
+from openagent_control.sdk import GovernedClient, governed
+
+oac = GovernedClient("http://localhost:8000", spiffe_id="spiffe://corp.net/ns/finance/agent/invoice-bot")
+
+@governed(oac)
+def read_query(quarter: str) -> dict:
+    return db.query(quarter)
+```
+
+`spiffe_id=` works because the default `OAC_IDENTITY_MODE=header` trusts a
+header — **a dev stub** ([ADR-0005](adr/0005-workload-identity-via-spiffe-stubbed-in-v1.md)).
+Day 2 replaces it with a real token and nothing else in your code changes.
+
+The starter registry is **empty**, so this call is denied and receipted as an
+orphan until you register the agent. That is deliberate: a fresh install
+trusts nothing.
+
+**To see the whole thing working end to end, with nothing stubbed:**
+
+```bash
+brew install opa && poetry install --with examples
+poetry run python -m examples.enterprise_scenario.scenario
+```
+
+Real OIDC identity, real OPA, real RFC 8693 credential brokering, a real MCP
+server over real SQLite — including the demonstration that an agent bypassing
+the gateway is refused by the upstream, because its token is scoped to the
+gateway and not to the API. That is the part to show a skeptical reviewer.
+
+---
+
+## Day 1 — govern an agent that already runs in production
+
+**Goal:** identity, policy, and a signed audit trail on an existing agent,
+without moving its tool code anywhere.
+
+Pick the integration shape that matches where your tools live:
+
+| Your situation | Use | What changes in your code |
+|---|---|---|
+| Tool functions live in your agent's own process | `@governed(oac)` | One decorator per tool |
+| Tools already behind an MCP server | Point the MCP client at the gateway | One URL |
+| LangChain / LangGraph agent | `sdk.langchain.govern(...)` / `proxied_tools(oac)` | Your tool list |
+
+```python
+from openagent_control.sdk.langchain import govern, proxied_tools
+
+tools = [govern(update_account, oac), *proxied_tools(oac)]   # drops into create_agent / ToolNode
+```
+
+Denials come back as tool *output* (`BLOCKED: … Stop execution and request user
+approval.`), so the model reads them and halts instead of retry-looping. An
+exception there would end the graph run instead
+([ADR-0017](adr/0017-client-sdk-and-authorize-only-endpoint.md)).
+
+**Register the agent** — until you do, it is refused and receipted as an orphan:
+
+```yaml
+- spiffe_id: spiffe://corp.net/ns/finance/agent/invoice-bot
+  display_name: Invoice Bot
+  owner: alice@corp.net
+  risk_tier: medium
+  status: active
+  granted_tools: [read_query]
+```
+
+`granted_tools` is the allowlist and it is sufficient on its own — policy
+guardrails only *narrow* it, never constitute it
+([ADR-0016](adr/0016-multi-upstream-routing-and-listing-projection.md)). The
+agent's `tools/list` is filtered to exactly these, so it never discovers a tool
+a call would then be denied for.
+
+**Know what this shape does and does not buy you.** `@governed` gives identity,
+policy and audit — but the agent runs the tool with the credential it already
+holds, so it *could* bypass the SDK and call the target directly. The proxy
+path is the stronger guarantee, because the agent never holds a credential the
+target accepts. The SDK is the on-ramp; the proxy is the end state (ADR-0017).
+
+---
+
+## Day 2 — stand it up for the org
+
+1. **Real workload identity.** `OAC_IDENTITY_MODE=oidc-jwks` validates real
+   Okta/Entra/Keycloak access tokens against published JWKS
+   ([ADR-0010](adr/0010-oidc-jwks-identity-for-okta-and-entra.md)); `jwt-svid`
+   for SPIRE. Your agent code changes only its `Authorization` header.
+
+2. **Roll out without blocking anything.** `OAC_DECISION_MODE=observe` records
+   and signs what a policy *would* have blocked, with `enforced=false`, and
+   forwards the call anyway ([ADR-0012](adr/0012-shadow-mode-for-first-deployment.md)).
+   Run it against live traffic, read the would-be denials on the dashboard,
+   tighten the policy, then switch to `enforce`. Registry-gate and fail-closed
+   denials are never softened by this.
+
+3. **Durable storage**, once a restart or a second replica matters:
    ```bash
-   brew install opa && poetry install --with examples
-   poetry run python -m examples.enterprise_scenario.scenario
+   pip install 'openagent-control[persistence]'
+   export OAC_DATABASE_URL=postgresql+asyncpg://user:pass@host/oac
+   openagent-control migrate
    ```
-   Real OIDC identity, real OPA, real RFC 8693 credential brokering, and a real
-   MCP server that refuses the agent's own token — so bypassing the gateway
-   fails. That last point is the one to show a skeptical reviewer.
-3. Register the agent: add an entry to `registry/agents.yaml` (or the
-   Postgres-backed table once persistence is on — see journey 3) with the
-   tools it's allowed to call. An agent that calls in without a registry entry
-   is refused and receipted as an orphan by design (ADR-0008) — there's no
-   implicit trust.
-4. Write the Rego policy for what "allowed" means for that agent's risk tier —
-   `policies/mcp_authz.rego` is the starting point; capability grants come
-   from the registry, argument thresholds live in policy.
-5. Swap the identity header for real auth once ready for a shared environment
-   — see journey 2, step 2. Nothing else in the agent's code changes; only the
-   `Authorization` header / SPIFFE header does.
 
-**What "day 1 value" looks like:** the enterprise scenario runs with no API
-keys and no cloud tenant, yet every signature, policy decision, token exchange,
-and SQL query in it is real — including the demonstration that an agent which
-routes around the gateway cannot reach the data at all.
+4. **Token exchange** (`OAC_TOKEN_EXCHANGE_MODE=rfc8693|entra`) — the scoped,
+   short-lived credential the upstream actually accepts, which the agent never
+   sees or holds.
 
-### What is real vs. simulated
+5. **Real key custody.** `OAC_SIGNING_KEY_MODE=vault-transit` keeps the
+   Ed25519 key inside HashiCorp Vault
+   ([ADR-0013](adr/0013-vault-transit-signing-key-custody.md)). The default
+   `in-process` key is regenerated on restart — fine for dev, not compliance
+   evidence. **Set this on both the gateway and the control plane**, or
+   signature verification cannot work across the two processes.
 
-Worth knowing before you show this to anyone who will ask:
+6. **Several MCP servers behind one gateway** — one registry, one policy
+   bundle, one audit chain:
+   ```bash
+   export OAC_MCP_UPSTREAMS='{"finance":"http://finance:8080/mcp","crm":"http://crm:8080/mcp"}'
+   ```
 
-| Real | Simulated / not yet real |
+7. **Authorize on the acting user, not just the agent.** For delegated calls,
+   `OAC_SUBJECT_VERIFICATION_MODE=oidc-jwks` verifies the human's own token and
+   exposes their id, roles and scopes to policy
+   ([ADR-0019](adr/0019-sponsorship-is-approval-authorization-comes-from-the-user.md)).
+   Sponsorship records *who approved*; this decides *what is permitted*:
+
+   ```rego
+   guardrail_violation("update_record", _) if {
+       input.subject == null                            # no user authority at all
+   }
+   guardrail_violation("update_record", _) if {
+       input.subject != null
+       not "finance-approver" in input.subject.roles    # user isn't entitled
+   }
+   ```
+
+   Write the null case explicitly. In Rego, `not "x" in null.roles` is
+   *undefined*, not true — so an entitlement rule written the obvious way
+   silently fails to fire for autonomous calls.
+
+---
+
+## Day N — operate it: inventory, access, audit
+
+```bash
+export OAC_DATABASE_URL=postgresql+asyncpg://user:pass@host/oac
+export OAC_CONTROL_PLANE_API_KEY=$(openssl rand -hex 32)
+openagent-control serve-control-plane --port 8001
+```
+
+Open **`http://localhost:8001/`** and sign in with that credential. The
+dashboard is a separate process from the enforcing gateway: it never imports
+`GovernedExecutionService`, the policy engine, or the MCP client, and it holds
+only the receipt-signing *public* key — it cannot forge a receipt or bypass
+policy ([ADR-0014](adr/0014-control-plane-api-and-dashboard.md)).
+
+### Inventory — every agent, in one place
+
+The **Registered agents** table is the fleet: identity, display name, owner,
+risk tier, granted tools, and status. This is the inventory answer to "how many
+agents do we have, who owns them, and what can each one touch" — the question
+that is otherwise unanswerable once agents are spread across teams.
+
+Every row's `owner` is the accountable human. An agent with no owner should not
+exist; the registry is the authorization boundary, so a registry entry granting
+`delete_records` is a standing production grant regardless of what Rego says.
+
+### Enable / disable access
+
+Each row has a **Suspend** / **Activate** button.
+
+- **Suspend** is the kill switch. A suspended agent is denied on its next call
+  — before the policy engine is even consulted — and the attempt is still
+  receipted. Shadow mode never softens this.
+- Revocation latency is one registry cache TTL (`OAC_REGISTRY_CACHE_TTL_SECONDS`,
+  30s default) with Redis on, immediate without it.
+- **Every mutation writes an `oac.operator_actions` row in the same transaction**
+  as the change itself, recording which operator did it. Who suspended an agent,
+  and when, is itself auditable.
+
+To change *what* an agent may do rather than whether it runs at all, edit
+`granted_tools` — via `PATCH /api/v1/agents/{spiffe_id}` or the registry file.
+Treat it like a production access-control change, because it is one.
+
+### What was allowed, what wasn't, and why
+
+- **Allowed / Denied** tiles: the last 24 hours at a glance. Denials counted as
+  `shadow` are ones a policy *would* have blocked while running in observe mode
+  — the number to watch during a rollout.
+- **Busiest agents** and **Why calls were denied**: aggregated over a window you
+  choose (1h / 24h / 7d). The denial-reason breakdown is where policy tuning
+  starts — a spike in *"Capability not granted"* usually means a registry entry
+  is too narrow, not that an agent is misbehaving.
+- **Recent decisions**: the last 25 receipts, each with agent, decision, reason,
+  and receipt id. This is how you answer "my agent got denied" — by reading its
+  receipts, not by guessing at policy intent.
+
+Grouping is by agent and by denial reason, **not by tool**. Receipts store a
+payload hash rather than the payload ([ADR-0003](adr/0003-ed25519-hash-chained-audit-ledger.md)),
+so *that* a call happened is provable while *what it was* is not readable.
+Adding a tool-name column to power a chart would trade a privacy property for a
+dashboard feature.
+
+### Prove the record hasn't been tampered with
+
+**Verify chain** walks every receipt, recomputing each hash link and signature.
+It reports `Intact` with a count, or `BROKEN` with the first bad sequence id.
+It is O(n) over the whole table — a fleet integrity check, not a page-load
+refresh.
+
+Everything on the dashboard is also available as JSON at `/api/v1/*` with the
+same operator credential — `agents`, `receipts`, `receipts/verify-chain`,
+`fleet/summary`, `fleet/activity`. The page has no privileged back channel;
+anything it can do, `curl` can do.
+
+---
+
+## The compliance reviewer's job
+
+**Goal:** answer "what did this agent do, and was it authorized?" after the
+fact, without trusting the agent's account of events.
+
+1. **Read the chain.** Every decision — allow *and* deny — produces an
+   Ed25519-signed receipt hash-chained to its predecessor. Tampering with or
+   deleting a past receipt breaks every receipt after it. That is what makes
+   this evidence rather than a log line.
+2. **Verify independently.** Signatures verify against the public key alone; a
+   reviewer need not trust the gateway process, only the key custody. With
+   `signing_key_mode=vault-transit` the private key never left Vault.
+3. **Reconstruct a decision.** Each receipt carries the identity, the decision,
+   the reason, whether it was enforced, and a timestamp.
+4. **Search** by agent, decision, enforced flag, or time window via
+   `GET /api/v1/receipts`.
+
+**Known limits, stated plainly:**
+- The receipt records the *agent*, not the acting human. "Which user was this
+  done for" is not answerable from the ledger alone yet (ADR-0019).
+- The default `in-process` signing key is regenerated on restart. Until
+  `vault-transit` is configured, receipts are a good-faith log, not
+  compliance-grade evidence.
+- No SOC 2 / EU AI Act export generation. The schema carries the fields such a
+  report would need; the pipeline does not exist (Phase 5, 0% built).
+
+---
+
+## What is real vs. still a stub
+
+| Real | Not yet |
 |---|---|
-| OIDC discovery, JWKS, RS256 validation, `aud`/`iss`/`exp` checks | The IdP runs on localhost, not a real Okta org or Entra tenant — though the same adapters are conformance-tested against real Keycloak 26.4, see [keycloak/](../examples/enterprise_scenario/keycloak/README.md) |
-| OPA policy evaluation against `policies/mcp_authz.rego` | — |
-| RFC 8693 token exchange with client authentication | — |
-| MCP JSON-RPC, bearer validation, scope enforcement, SQL over SQLite | Invoice data is seeded fixtures |
-| Ed25519 hash-chained receipts | Signing key is in-process, **not KMS-backed** — see journey 4 |
-| LangGraph agent + graph execution | The model is scripted unless `OAC_SCENARIO_MODEL` is set |
+| OPA policy, fail-closed denials, shadow mode | Response-side filtering |
+| Signed hash-chained receipts, durable, replica-safe | Receipts naming the acting human |
+| Vault Transit key custody | — (`in-process` remains the **default**) |
+| OIDC/JWKS + JWT-SVID identity; verified subject authorization | SPIRE deployment; `header` mode remains the **default** |
+| RFC 8693 / Entra OBO exchange | — (`stub` remains the **default**) |
+| Real MCP both directions; many upstreams per gateway | Per-upstream credentials; session pooling |
+| Control-plane API + dashboard, operator-action audit | Browser OIDC redirect login |
+| SDK: `@governed`, proxy client, LangChain/LangGraph | — |
+| — | Human-in-the-loop approvals; sandboxed writes; chargeback export |
 
----
-
-## 2. Platform/security engineer
-
-**Goal:** stand the gateway up for real, wired to the org's actual identity
-provider, policy, and durable storage — the work in journey 1 assumed a
-throwaway file registry and a trusted header.
-
-1. **Pick an identity mode** (`OAC_IDENTITY_MODE`) based on what the org
-   already runs:
-   - `oidc-jwks` — Okta or Microsoft Entra ID already issue access tokens to
-     workloads. Point `OAC_OIDC_DISCOVERY_URL` / `OAC_OIDC_AUDIENCE` at the
-     tenant; see [ADR-0010](adr/0010-oidc-jwks-identity-for-okta-and-entra.md)
-     and run [`examples/oidc_identity_demo/`](../examples/oidc_identity_demo/README.md)
-     first against the bundled mock IdP to see the exact three failure/success
-     paths (allow, orphan-deny, wrong-audience-401) before pointing at a real
-     tenant.
-   - `jwt-svid` — SPIRE is already deployed and issues SPIFFE JWT-SVIDs.
-   - `header` — dev/demo only; trusts an `X-Spiffe-ID` header outright. Only
-     safe behind a boundary that already authenticated the caller
-     ([ADR-0005](adr/0005-workload-identity-via-spiffe-stubbed-in-v1.md)).
-2. **Turn on durable storage** once file-based registry/in-memory ledger
-   won't survive a restart or a second replica:
-   ```bash
-   export OAC_DATABASE_URL=postgresql+asyncpg://user:pass@host/db
-   make db-upgrade        # alembic, creates the oac schema
-   export OAC_REDIS_URL=redis://host:6379/0   # optional: caches registry reads + brokered tokens
-   ```
-   See [ADR-0009](adr/0009-postgres-persistence-and-redis-caching.md). This is
-   additive — `poetry install --extras persistence`, otherwise unset and the
-   gateway stays zero-dependency.
-3. **Wire token exchange** (`OAC_TOKEN_EXCHANGE_MODE`) to whatever mints the
-   scoped, short-lived credential the upstream tool actually accepts — RFC
-   8693 (Okta-compatible) or Entra's OBO grant. This is the credential the
-   agent itself never sees or holds.
-4. **Write the org's real policy** in `policies/mcp_authz.rego`, run OPA as
-   its own process (`make up` already wires this in docker-compose), and
-   decide the enforcement point for rollout — see journey 2a below if this is
-   a first deployment into an existing production traffic path.
-5. **Deploy.** `Dockerfile` is a multi-stage build; `docker-compose.yml` has
-   a `persistence` profile. There's no Helm chart or k8s manifest yet — that's
-   an open gap, not a hidden feature.
-
-### 2a. First rollout into live traffic
-
-The plan this project targets assumes a shadow/observe-only phase before
-enforcing (see [roadmap.md](roadmap.md) critical path item 1). That toggle
-(`decision_mode: enforce|observe`) **does not exist yet** — today every DENY
-blocks the call. If rolling out against traffic you don't fully trust your
-policy for yet, the honest options are: (a) start with a deliberately
-permissive policy and tighten it using the receipts as ground truth, or (b)
-wait for the shadow-mode toggle. Don't assume "observe mode" exists because
-it's in the roadmap — it isn't built.
-
----
-
-## 3. Registry operator
-
-**Goal:** the day-to-day job of keeping the Agent Registry accurate — who's
-allowed to exist, and what they're allowed to touch.
-
-1. **Onboard an agent:** add a row (`registry/agents.yaml` in file mode, or an
-   insert into `oac.agents` in Postgres mode) with `spiffe_id`, `owner`,
-   `risk_tier`, `status: active`, and `granted_tools`. Nothing calls through
-   the gateway successfully until this exists — that's the zero-orphaned-agents
-   guarantee from [ADR-0008](adr/0008-agent-registry-as-declarative-data.md).
-2. **Suspend an agent:** flip `status` to `suspended`. In file mode this is a
-   git-reviewed YAML edit (deliberately — it's an audit trail of its own); the
-   file is re-read when its mtime changes, so a suspension takes effect on the
-   next call without a gateway restart. In Postgres mode it's a row update.
-   There's **no admin API yet** to do either over HTTP (tracked in
-   [roadmap.md](roadmap.md) critical path item 6), so today this means direct
-   DB/file access. With Redis caching on, revocation is visible within one
-   cache TTL (30s default); immediately otherwise.
-3. **Review before merging a registry change:** the registry is the
-   authorization boundary, not the policy — a registry entry with
-   `granted_tools: [delete_records]` is a real, standing grant regardless of
-   what Rego says elsewhere. Treat registry PRs with the scrutiny of a
-   production access-control change, because that's what they are.
-4. **Investigate a denial:** every decision — allow or deny — produces a
-   receipt (see journey 4). An agent complaining "I got denied" is answered by
-   reading its own chained receipts, not by guessing at policy intent.
-
----
-
-## 4. Compliance / audit reviewer
-
-**Goal:** answer "what did this agent actually do, and was it authorized?"
-after the fact, without trusting the agent's own account of events.
-
-1. **Read the receipt chain.** Every tool call — allowed or denied — produces
-   an Ed25519-signed receipt, hash-chained to the one before it
-   ([ADR-0003](adr/0003-ed25519-hash-chained-audit-ledger.md)). Tampering with
-   or deleting a past receipt breaks the chain for every receipt after it,
-   which is the property that makes this evidence rather than a log line.
-2. **Verify a signature independently.** The public key is retrievable from
-   the ledger adapter (`ledger.public_key()`); a reviewer doesn't need to
-   trust the gateway process itself to verify what it signed, only the key
-   custody. **Known gap:** the signing key is generated in-process by default
-   (no KMS/HSM adapter yet) — for the receipt to count as real compliance
-   evidence rather than a good-faith log, that key needs to come from a
-   controlled source. Don't present this as audit-grade until that's closed.
-3. **Reconstruct a decision.** Each receipt carries the identity, the tool
-   call, the policy decision and reason, and a timestamp — enough to answer
-   "was this agent authorized to do this, and who granted it" without asking
-   the platform team to remember.
-4. **What's not here yet:** SOC 2 / EU AI Act export generation, and
-   chargeback/billing integration (Phase 5 in roadmap.md, 0% built). The
-   receipt schema carries the fields such an export would need, but no export
-   pipeline exists — a reviewer today is reading receipts directly, not
-   pulling a report.
+The three defaults in bold are the ones to change before calling a deployment
+production-grade. `openagent-control doctor` names each of them.

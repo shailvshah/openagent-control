@@ -25,6 +25,20 @@ class OPAPolicyEngine:
                 "agent": (
                     request.registration.model_dump(mode="json") if request.registration else None
                 ),
+                # The verified human this call runs as, when delegated
+                # (ADR-0019). A curated projection, not the raw token: policy
+                # input ends up in OPA decision logs, and a user's whole claim
+                # set does not belong there. None for autonomous calls, which
+                # a rule must read as "no user entitlements to draw on".
+                "subject": (
+                    {
+                        "id": request.subject.subject_id,
+                        "roles": request.subject.roles,
+                        "scopes": request.subject.scopes,
+                    }
+                    if request.subject
+                    else None
+                ),
                 "params": {
                     "name": request.tool_name,
                     "arguments": request.arguments,

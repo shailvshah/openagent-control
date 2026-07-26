@@ -73,6 +73,38 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     """Expected `iss` claim; empty = use the discovery document's own `issuer`."""
 
+    subject_verification_mode: Literal["off", "oidc-jwks"] = "off"
+    """Whether the human subject token on a delegated call is verified and fed
+    to policy (ADR-0019). "off" (default, unchanged behaviour) relays the token
+    to the IdP without inspecting it: the IdP still rejects a forged one, but
+    the gateway cannot tell who the call runs as, and policy cannot reason
+    about the user's entitlements at all. "oidc-jwks" validates it against the
+    IdP's JWKS and exposes the user's id/roles/scopes to Rego."""
+
+    subject_oidc_discovery_url: str = ""
+    """Discovery document for subject tokens; empty = reuse
+    `oidc_discovery_url`, which is right when users and workloads share an
+    issuer (the common case)."""
+    subject_oidc_audience: str = ""
+    """Expected `aud` on the subject token; empty = reuse `oidc_audience`.
+    This check is also what rejects an ID token being passed as a subject
+    token — an ID token's `aud` is the client id, not this resource."""
+    subject_role_claim: str = "roles"
+    """Which claim carries the user's roles. Not a standard OIDC claim: Entra
+    uses `roles`, Okta needs a custom `groups` claim, Keycloak nests them at
+    `realm_access.roles` (dotted paths are resolved)."""
+
+    subject_binding: Literal["strict", "may-act-only", "off"] = "strict"
+    """How firmly the subject token must be tied to the calling agent.
+
+    "strict" honours RFC 8693 `may_act` when the IdP issues it, and otherwise
+    requires the subject's issuer-scoped id to equal the sponsor the agent
+    claimed. "may-act-only" enforces `may_act` alone — the correct setting for
+    an IdP using **pairwise subject identifiers**, where the same human
+    legitimately has a different `sub` in the agent's token than in the subject
+    token, so equality would reject valid calls. "off" verifies the token but
+    checks no relationship to the caller."""
+
     token_exchange_mode: Literal["stub", "rfc8693", "entra"] = "stub"
     """"rfc8693" = Okta-compatible RFC 8693 exchange; "entra" = Microsoft OBO flow."""
     token_exchange_url: str = ""

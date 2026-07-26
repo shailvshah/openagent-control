@@ -18,10 +18,10 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
+from openagent_control.adapters.claims import resolve_dotted_claim
 from openagent_control.adapters.operator_identity.api_key import ApiKeyOperatorAuth
 from openagent_control.adapters.operator_identity.oidc import (
     OidcOperatorAuth,
-    _resolve_dotted_claim,
 )
 from openagent_control.domain.errors import IdentityError
 
@@ -104,9 +104,9 @@ def _token(
 def test_resolve_dotted_claim_walks_nested_dicts() -> None:
     claims: dict[str, object] = {"realm_access": {"roles": ["oac-operator", "other"]}}
 
-    assert _resolve_dotted_claim(claims, "realm_access.roles") == ["oac-operator", "other"]
-    assert _resolve_dotted_claim(claims, "realm_access.missing") is None
-    assert _resolve_dotted_claim(claims, "missing.roles") is None
+    assert resolve_dotted_claim(claims, "realm_access.roles") == ["oac-operator", "other"]
+    assert resolve_dotted_claim(claims, "realm_access.missing") is None
+    assert resolve_dotted_claim(claims, "missing.roles") is None
 
 
 @pytest.mark.asyncio

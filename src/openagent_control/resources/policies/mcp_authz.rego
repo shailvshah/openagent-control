@@ -54,3 +54,44 @@ granted(tool) if {
 guardrail_violation("salesforce_update_account", args) if {
 	args.credit_limit > 10000
 }
+
+# --- The acting user's own entitlements (ADR-0019) ---
+#
+# `input.subject` is the human this call runs as, verified from their own
+# token — set only when OAC_SUBJECT_VERIFICATION_MODE=oidc-jwks and the call
+# is delegated. It is NOT the sponsor: sponsorship records who approved the
+# agent acting, which is accountability, not permission. Authorization comes
+# from the user's own id, roles and scopes.
+#
+#   input.subject = {"id": "https://idp/realms/corp#a1b2", "roles": [...], "scopes": [...]}
+#
+# The rules below are commented out because enabling them would change the
+# decision for every existing deployment. Uncomment to require that the agent's
+# grant AND the user's entitlement both permit a call — the intersection, which
+# is the point of delegation:
+#
+#   guardrail_violation("update_record", _) if {
+#   	not "finance-approver" in input.subject.roles
+#   }
+#
+# Absent-subject handling is the part worth getting right. `input.subject` is
+# null for an autonomous call, and `not "x" in null.roles` is undefined rather
+# than true, so the rule above would NOT fire — an autonomous agent would sail
+# past a check meant to constrain it. Say it explicitly instead:
+#
+#   guardrail_violation("update_record", _) if {
+#   	input.subject == null            # nobody's authority to act under
+#   }
+#
+#   guardrail_violation("update_record", _) if {
+#   	input.subject != null
+#   	not "finance-approver" in input.subject.roles
+#   }
+#
+# Scopes work the same way, and are the better choice when the entitlement is
+# already modelled in the IdP as an OAuth scope on the user's own token:
+#
+#   guardrail_violation("read_query", _) if {
+#   	input.subject != null
+#   	not "invoices:read" in input.subject.scopes
+#   }

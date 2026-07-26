@@ -37,6 +37,7 @@ from openagent_control.domain.ports import (
     Ledger,
     MCPUpstream,
     PolicyEngine,
+    SubjectVerifier,
     TokenExchange,
 )
 from openagent_control.resources import example_registry
@@ -57,6 +58,8 @@ class Container:
     audit_exporter: AuditExporter
     token_exchange: TokenExchange
     mcp_upstream: MCPUpstream
+    subject_verifier: SubjectVerifier | None = None
+    subject_binding: Literal["strict", "may-act-only", "off"] = "strict"
     delegated_audience: str = "openagent-control-mcp-upstream"
     decision_mode: Literal["enforce", "observe"] = "enforce"
     db_engine: AsyncEngine | None = None
@@ -72,6 +75,8 @@ class Container:
             audit_exporter=self.audit_exporter,
             token_exchange=self.token_exchange,
             mcp_upstream=self.mcp_upstream,
+            subject_verifier=self.subject_verifier,
+            subject_binding=self.subject_binding,
             delegated_audience=self.delegated_audience,
             decision_mode=self.decision_mode,
         )
@@ -159,6 +164,25 @@ def _mcp_upstream(settings: Settings) -> MCPUpstream:
     )
 
 
+def _subject_verifier(settings: Settings) -> SubjectVerifier | None:
+    """The human-authorization half of a delegated call (ADR-0019).
+
+    None unless explicitly enabled: turning it on changes what a delegated
+    call requires (a subject token that actually validates, and by default one
+    bound to the caller), which is a deployment decision, not a default.
+    """
+    if settings.subject_verification_mode != "oidc-jwks":
+        return None
+    from openagent_control.adapters.identity.oidc_subject import OidcSubjectVerifier
+
+    return OidcSubjectVerifier(
+        discovery_url=settings.subject_oidc_discovery_url or settings.oidc_discovery_url,
+        audience=settings.subject_oidc_audience or settings.oidc_audience,
+        role_claim=settings.subject_role_claim,
+        issuer=settings.oidc_issuer,
+    )
+
+
 def _require_persistence(feature: str) -> NoReturn:
     """Raises a clear startup error if the optional persistence extra is missing."""
     raise RuntimeError(
@@ -238,6 +262,8 @@ def build_container(settings: Settings) -> Container:
         audit_exporter=StdoutAuditExporter(),
         token_exchange=token_exchange,
         mcp_upstream=_mcp_upstream(settings),
+        subject_verifier=_subject_verifier(settings),
+        subject_binding=settings.subject_binding,
         delegated_audience=settings.delegated_audience,
         decision_mode=settings.decision_mode,
         db_engine=db_engine,

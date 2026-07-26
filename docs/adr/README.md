@@ -20,3 +20,4 @@
 | [0016](0016-multi-upstream-routing-and-listing-projection.md) | Many upstreams behind one gateway, and a listing that tells the truth |
 | [0017](0017-client-sdk-and-authorize-only-endpoint.md) | A client SDK, and the authorize-only endpoint it needs |
 | [0018](0018-dashboard-as-one-static-file.md) | The dashboard is one static file, not a SPA build |
+| [0019](0019-sponsorship-is-approval-authorization-comes-from-the-user.md) | Sponsorship is approval; authorization comes from the user |
