@@ -17,6 +17,7 @@ env:
   POETRY_VERSION: "2.3.2"
   OPA_VERSION: "v1.18.2"
   VAULT_VERSION: "2.0.3"
+  OTELCOL_VERSION: "0.157.0"
 
 jobs:
   quality:
@@ -106,6 +107,17 @@ jobs:
       # silently happen in CI.
       - name: Verify Vault is available (integration tests must not skip)
         run: vault version
+
+      - name: Install OTel Collector
+        run: |
+          curl -fsSL -o /tmp/otelcol.tar.gz \
+            "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_VERSION}/otelcol_${OTELCOL_VERSION}_linux_amd64.tar.gz"
+          tar xzf /tmp/otelcol.tar.gz -C /usr/local/bin otelcol
+
+      # Same reasoning again: the OTel span integration test skips itself
+      # without the binary, which must not silently happen in CI.
+      - name: Verify OTel Collector is available (integration tests must not skip)
+        run: otelcol --version
 
       - name: Create the oac schema
         run: poetry run openagent-control migrate

@@ -143,3 +143,42 @@ def test_serve_configures_loguru_before_starting_uvicorn(monkeypatch: pytest.Mon
     assert cli.main(["serve", "--log-level", "debug", "--log-format", "json"]) == 0
 
     assert configured == {"level": "debug", "json_format": True}
+
+
+def test_serve_does_not_configure_tracing_when_otel_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+    monkeypatch.setattr("openagent_control.cli.configure_logging", lambda *a, **k: None)
+    called = False
+
+    def fake_configure_tracing(*args: Any, **kwargs: Any) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("openagent_control.cli.configure_tracing", fake_configure_tracing)
+
+    assert cli.main(["serve"]) == 0
+    assert called is False
+
+
+def test_serve_configures_tracing_when_otel_is_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+    monkeypatch.setattr("openagent_control.cli.configure_logging", lambda *a, **k: None)
+    monkeypatch.setenv("OAC_OTEL_ENABLED", "true")
+    monkeypatch.setenv("OAC_OTEL_EXPORTER_ENDPOINT", "http://collector:4318/v1/traces")
+    monkeypatch.setenv("OAC_OTEL_SERVICE_NAME", "oac-test")
+    configured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "openagent_control.cli.configure_tracing",
+        lambda endpoint, service_name: configured.update(
+            endpoint=endpoint, service_name=service_name
+        ),
+    )
+
+    assert cli.main(["serve"]) == 0
+
+    assert configured == {
+        "endpoint": "http://collector:4318/v1/traces",
+        "service_name": "oac-test",
+    }

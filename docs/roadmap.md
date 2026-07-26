@@ -32,12 +32,37 @@ publishes to PyPI via Trusted Publishing on a tag. See
   2026-07-25) — the vendor never holds the token-exchange secret or sits in
   the customer's data path. Not started; tracked below.
 
+## Scope decisions from the integrations discussion (2026-07-25)
+
+Four integration axes were named as in scope, none started yet:
+
+- **Agent-framework SDK plugins** — a decorator/plugin surface embedded in an
+  agent framework's own call sites, routing those calls through this
+  project's identity, policy, and audit path. This is a new SDK package, not
+  an extension of the gateway — its own distribution, versioning, and
+  framework-conformance testing (same "verify against the real framework"
+  discipline as everything else here).
+- **Enterprise target-system adapters** — Phase 3's response-side filtering,
+  already on the roadmap above. Needs a real sandbox/trial account per system
+  to verify against before it can ship.
+- **Approval-channel adapters** — Phase 4's `ApprovalChannel` port, already on
+  the roadmap above. Needs a real chat-platform workspace/tenant to verify
+  against.
+- **Control-plane API + dashboard docs** — document the API/dashboard above
+  once built.
+
+**Sequencing (2026-07-25): control-plane API + dashboard next**, once OTel
+spans land — no external sandbox required (just this project's own Postgres),
+and it makes the other three easier to demo (e.g. an approval-channel adapter
+has somewhere to surface into). The SDK-plugin work and the two
+sandbox-dependent adapters remain explicitly queued behind it, not started.
+
 ## Where we are, phase by phase
 
 | Phase | Target | Status | What exists today | What's missing |
 |---|---|---|---|---|
 | 1. Agent Registry & Identity Plane | M1-2 | 🟢 ~90% | **Master Agent Registry**, now a real system of record (ADR-0008 + ADR-0009): `PostgresAgentRegistry` (`oac.agents` table, own schema, timestamps incl. `status_changed_at`) is the production adapter; `FileAgentRegistry`/YAML remains the zero-dependency dev default and import source. Orphaned or suspended agents get a *receipted* DENY; Rego holds only logic. Registry reads are Redis-cached (30s TTL) so the hot path doesn't hit Postgres every call. **IdP adapters**: RFC 8693 (Okta-compatible) + Entra OBO token exchange, with exchanged tokens Redis-cached to their own `exp` (minus safety margin). **Identity validation, three real paths**: `JwtSvidIdentityProvider` (SPIFFE JWT-SVIDs) and, new, `OidcJwksIdentityProvider` (ADR-0010) — validates actual Okta/Entra-issued access tokens against their published JWKS (signature, issuer, audience, orphan-agent checks), built from a dedicated `enterprise-idp-integration` skill and verified against real signed tokens over a locally served JWKS — see `examples/oidc_identity_demo/` | Actual SPIRE server/agent deployment + Workload API (x509) attestation; an admin/kill-switch API to write registry status changes (Postgres makes this buildable, but nothing calls it yet — cache TTL is the only revocation-latency bound today); JWKS/trust-bundle rotation cadence tuning; tenant-independent Entra multi-tenant validation (signing-key-issuer-scope check, flagged as a gap in ADR-0010); live validation against a real Okta org or Entra tenant specifically — though the identity and RFC 8693 adapters are now conformance-tested against a real third-party IdP (Keycloak 26.4, `tests/integration/test_keycloak_conformance.py`), which caught a genuine app-only-token misclassification bug |
-| 2. MCP Gateway in Shadow Mode | M3 | 🟢 ~75% | The full enforcing gateway: interception, OPA evaluation, fail-closed denials, semantic error payloads, Ed25519 hash-chained receipts, durably persisted and replica-safe (`PostgresLedger`, row-locked chain head). Now verified against a **fully real stack** (`examples/enterprise_scenario/` + `tests/integration/`): real OIDC identity, real `opa` process, real RFC 8693 exchange, and a real MCP server that validates the brokered credential's audience and scope — which is what makes the **gateway-bypass refusal** demonstrable rather than asserted. Credential brokering now covers autonomous agents too (previously a placeholder string no real upstream would accept). **The gateway also speaks the real MCP transport** via the official MCP SDK (ADR-0011) — the previous adapter POSTed bare JSON-RPC, which any genuine MCP server rejects with 406; verified against GitHub's production MCP server | **Shadow/dry-run mode itself** (a `decision_mode: enforce\|observe` setting that logs would-be denials without blocking); OpenTelemetry spans (dependency declared, unused); Envoy sidecar variant (ADR-0001 Pattern A); policy-baselining tooling from observed traffic; **MCP session pooling** — one session per tool call costs an extra initialize round trip, unmeasured under load (ADR-0011) |
+| 2. MCP Gateway in Shadow Mode | M3 | 🟢 ~80% | The full enforcing gateway: interception, OPA evaluation, fail-closed denials, semantic error payloads, Ed25519 hash-chained receipts, durably persisted and replica-safe (`PostgresLedger`, row-locked chain head). Now verified against a **fully real stack** (`examples/enterprise_scenario/` + `tests/integration/`): real OIDC identity, real `opa` process, real RFC 8693 exchange, and a real MCP server that validates the brokered credential's audience and scope — which is what makes the **gateway-bypass refusal** demonstrable rather than asserted. Credential brokering now covers autonomous agents too (previously a placeholder string no real upstream would accept). **The gateway also speaks the real MCP transport** via the official MCP SDK (ADR-0011) — the previous adapter POSTed bare JSON-RPC, which any genuine MCP server rejects with 406; verified against GitHub's production MCP server. **OpenTelemetry spans now real**: `GovernedExecutionService` emits a root span plus `identify`/`registry.lookup`/`policy_evaluate`/`broker_credential`/`forward` child spans, exported via OTLP/HTTP when `OAC_OTEL_ENABLED=true` and verified against a real local `otelcol` binary receiving and parsing the actual wire protocol, not the SDK's in-memory exporter | Envoy sidecar variant (ADR-0001 Pattern A); policy-baselining tooling from observed traffic; **MCP session pooling** — one session per tool call costs an extra initialize round trip, unmeasured under load (ADR-0011) |
 | 3. Ethical Walls & Read-Only Enforcement | M4 | 🟠 ~25% | Request-side ABAC: per-identity capability grants + argument thresholds in OPA; deny enforcement live | **Response-side filtering** (stripping data the sponsor isn't cleared for); `tools/list` filtering (claimed in ADR-0004, not implemented); read/write action classification in policy; iManage/NetDocuments/DealCloud target adapters |
 | 4. Sandboxing & Business Diffs | M5-6 | 🟡 ~25% | `ApprovalChannel` port declared (no implementation); receipts are chained, signed, **and durable across restarts/replicas** (ADR-0009); **KMS-backed signing key now real** (ADR-0013): `signing_key_mode=vault-transit` never lets the Ed25519 key leave HashiCorp Vault, verified against a real Vault dev server | MicroVM/sandbox execution for writes; Business Diff generation; Slack/Teams approval adapters; **sequence sealing** API (concept in ADR-0003, no endpoint); production Vault operations (HA, unsealing, backup) are explicitly out of this project's scope per ADR-0013 — it treats Vault as an operated external dependency, same as Postgres |
 | 5. Chargebacks & Compliance Reporting | M7+ | 🔴 0% | Receipt schema carries what a billing/compliance export would need | Everything: Intapp Time / Elite 3E integration, value telemetry, SOC 2 / EU AI Act export generation |
@@ -62,8 +87,15 @@ In dependency order — each unblocks the phase next to it:
    settings. Remaining: a SPIRE deployment itself (x509 Workload API attestation),
    trust-bundle/JWKS rotation cadence tuning, and tenant-independent Entra
    multi-tenant validation; the header mode remains dev-only per ADR-0005.
-5. **OTel wiring** — Phase 2's whole purpose is telemetry; the dependency is in
-   `pyproject.toml` but no spans are emitted.
+5. ~~OTel wiring~~ — **done**: `GovernedExecutionService` emits spans
+   (`governed_execution.execute` root + `identify`/`registry.lookup`/
+   `policy_evaluate`/`broker_credential`/`forward` children) via
+   `opentelemetry.trace.get_tracer(...)`, which is always a real tracer — a
+   no-op one until `OAC_OTEL_ENABLED=true` configures a TracerProvider, so
+   instrumentation itself has zero cost or risk when tracing is off. Verified
+   against a real local OTel Collector binary (`otelcol`), not the SDK's
+   in-memory exporter — the collector actually receives and parses the
+   OTLP/HTTP payload. Not tied to any vendor backend.
 6. ~~Signing key custody~~ — **done** (ADR-0013): shared chain state (ADR-0009)
    plus a `Signer` port with a real HashiCorp Vault Transit adapter
    (`signing_key_mode=vault-transit`) — the private Ed25519 key never leaves

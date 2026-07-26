@@ -85,3 +85,13 @@ class Settings(BaseSettings):
     vault_url: str = "http://localhost:8200"
     vault_token: str = ""
     vault_transit_key_name: str = "oac-receipt-signer"
+
+    otel_enabled: bool = False
+    """Off by default: instrumentation (spans through GovernedExecutionService)
+    is always present via the no-op tracer, but nothing is exported until a
+    collector endpoint is configured — an unreachable collector must not be
+    able to affect request handling."""
+    otel_exporter_endpoint: str = "http://localhost:4318/v1/traces"
+    """OTLP/HTTP endpoint. Any local collector or vendor OTLP ingest works;
+    this project is not tied to a specific backend."""
+    otel_service_name: str = "openagent-control"

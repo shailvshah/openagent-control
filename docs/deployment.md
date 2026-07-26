@@ -116,6 +116,9 @@ Every setting is an `OAC_`-prefixed environment variable — see
 | `OAC_TOKEN_EXCHANGE_MODE` | `stub` | `rfc8693` (Okta/Keycloak) or `entra` |
 | `OAC_DECISION_MODE` | `enforce` | `observe` forwards a policy DENY instead of blocking it, and receipts it with `enforced=false` — see [ADR-0012](adr/0012-shadow-mode-for-first-deployment.md). For a first production rollout, before trusting a policy to actually block anything. |
 | `OAC_SIGNING_KEY_MODE` | `in-process` | `vault-transit` signs receipts via HashiCorp Vault (`OAC_VAULT_URL`, `OAC_VAULT_TOKEN`, `OAC_VAULT_TRANSIT_KEY_NAME`) — the private key never leaves Vault. See [ADR-0013](adr/0013-vault-transit-signing-key-custody.md); `in-process` is a dev-grade default, not compliance-grade custody. |
+| `OAC_OTEL_ENABLED` | `false` | Emits spans through the governed-execution path (identify, registry lookup, policy evaluate, credential broker, forward) via OTLP/HTTP. Off by default: instrumentation always runs (a no-op tracer costs nothing), only exporting is opt-in. |
+| `OAC_OTEL_EXPORTER_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP/HTTP traces endpoint — any collector or vendor OTLP ingest, not tied to a specific backend. |
+| `OAC_OTEL_SERVICE_NAME` | `openagent-control` | `service.name` resource attribute on exported spans. |
 
 ### Vault-backed receipt signing
 
@@ -133,6 +136,23 @@ openagent-control doctor              # reports a public-key fingerprint if reac
 An unreachable Vault or a missing transit key fails at startup, the same
 posture as the OIDC identity adapter — not a silent per-request signing
 failure.
+
+### Tracing
+
+```bash
+export OAC_OTEL_ENABLED=true
+export OAC_OTEL_EXPORTER_ENDPOINT=http://your-collector:4318/v1/traces
+export OAC_OTEL_SERVICE_NAME=openagent-control
+```
+
+Every governed call produces one root span (`governed_execution.execute`,
+tagged with the tool name and the policy decision) and child spans for
+`identify`, `registry.lookup`, `policy_evaluate`, `broker_credential`, and
+`forward`. Verified against a real local OpenTelemetry Collector binary
+(`tests/integration/test_otel_tracing.py`) — not just the SDK's in-memory
+exporter — so the OTLP/HTTP wire format is proven, not assumed. An unreachable
+collector never affects request handling: exporting happens off the request
+path via a batching background thread.
 
 ## Verifying a release
 

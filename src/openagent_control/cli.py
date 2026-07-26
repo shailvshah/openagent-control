@@ -27,6 +27,7 @@ from openagent_control.config import Settings
 from openagent_control.diagnostics import run_all
 from openagent_control.logging_config import configure_logging
 from openagent_control.resources import alembic_config, default_policy_dir, example_registry
+from openagent_control.tracing import configure_tracing
 
 _OK = "  ok      "
 _FAIL = "  FAILED  "
@@ -117,6 +118,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # This process owns its own logging from here on — see logging_config.py
     # for why this call doesn't live inside create_app() or an adapter.
     configure_logging(args.log_level, json_format=args.log_format == "json")
+
+    settings = Settings()
+    if settings.otel_enabled:
+        configure_tracing(settings.otel_exporter_endpoint, settings.otel_service_name)
 
     uvicorn.run(
         "openagent_control.gateway.app:app",
