@@ -1,6 +1,6 @@
 """HTTP MCP upstream adapter — forwards an approved tools/call to a downstream MCP server.
 
-Real target adapters (Intapp DealCloud, other MCP servers) point this same
+Real target adapters (MCP servers) point this same
 implementation at a different `upstream_url`; no new adapter code is needed unless a
 target requires a non-standard request shape.
 """

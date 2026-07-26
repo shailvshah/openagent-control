@@ -12,7 +12,7 @@ gateway the agent's client points at, or a native SDK/middleware decorator.
 ## Decision
 Support all three long-term, but build **Pattern B (egress MCP/LLM gateway)** first.
 The agent's MCP or LLM client `BASE_URL` is pointed at the control plane; no changes
-are required to the target system (Salesforce, Snowflake, DealCloud, etc.) and no
+are required to the target system (Salesforce, Snowflake, etc.) and no
 per-framework SDK work is required to get a first working system.
 
 Sidecar injection (Pattern A) and the native SDK decorator (Pattern C) are follow-on

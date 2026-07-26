@@ -66,7 +66,7 @@ Three deployment models, in increasing order of integration effort:
   local DB queries.
 - **Pattern B — Egress MCP/LLM gateway** (zero code change): the agent's MCP or LLM
   client base URL points at the control plane; used for outbound calls to systems like
-  Salesforce, Snowflake, DealCloud.
+  Salesforce, Snowflake.
 - **Pattern C — Native SDK / middleware** (low code change): a Python decorator wraps
   LangGraph/CrewAI tool nodes for stateful HITL interruption.
 

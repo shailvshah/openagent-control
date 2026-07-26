@@ -39,7 +39,7 @@ only minimal or stub adapters behind most of them:
 | Port | Category | v1 adapter | Later adapters |
 |---|---|---|---|
 | `TokenExchange` | Identity provider | stub (mocked RFC 8693 response) | Okta, Microsoft Entra ID |
-| `MCPUpstream` | Target/tool surface | forwards to a mock MCP server | Intapp DealCloud MCP, other MCP servers |
+| `MCPUpstream` | Target/tool surface | forwards to a mock MCP server | MCP servers |
 | `ToolUpstream` | Target/tool surface | not implemented in v1 | OpenAPI-described REST APIs |
 | `AuditExporter` | Observability/SIEM | stdout/log adapter | Datadog, Grafana (via OTLP or their APIs) |
 | `MetricsSink` | Observability/SIEM | OpenTelemetry no-op/console exporter | Grafana/Datadog metrics backends |
@@ -49,7 +49,7 @@ only minimal or stub adapters behind most of them:
 ## Consequences
 - More files and indirection than a single `main.py` for the same v1 feature set —
   accepted deliberately, because the project's near-term roadmap (Cedar, real SPIRE,
-  Vault, RFC 8693 token exchange, Okta/Entra, DealCloud, Grafana/Datadog, LangGraph/
+  Vault, RFC 8693 token exchange, Okta/Entra, Grafana/Datadog, LangGraph/
   CrewAI, OpenAPI targets) is exactly the kind of change this structure is meant to
   absorb without touching the gateway.
 - Every new adapter must be tested against its port's contract (not just its own

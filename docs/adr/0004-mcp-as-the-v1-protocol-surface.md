@@ -6,7 +6,7 @@ Accepted
 ## Context
 Agents reach tools through different transports: direct REST/SDK calls, and
 increasingly the Model Context Protocol (MCP), which standardizes `tools/list` and
-`tools/call` JSON-RPC methods across many vendors (including systems like DealCloud's
+`tools/call` JSON-RPC methods across many vendors (including systems like enterprise
 MCP server). Governing MCP gives one integration point for many downstream tools;
 governing arbitrary REST calls means bespoke handling per API.
 
