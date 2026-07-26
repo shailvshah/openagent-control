@@ -21,6 +21,7 @@ from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvid
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
 from openagent_control.adapters.ledger.signing import ReceiptSigner, Signer
 from openagent_control.adapters.mcp_upstream.http import HttpMCPUpstream
+from openagent_control.adapters.mcp_upstream.routing import RoutingMCPUpstream
 from openagent_control.adapters.mcp_upstream.streamable_http import StreamableHttpMCPUpstream
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
 from openagent_control.adapters.registry.file import FileAgentRegistry
@@ -136,10 +137,26 @@ def resolve_registry_path(settings: Settings) -> Path:
     return path
 
 
-def _mcp_upstream(settings: Settings) -> MCPUpstream:
+def _one_upstream(settings: Settings, url: str) -> MCPUpstream:
     if settings.mcp_upstream_mode == "raw-jsonrpc":
-        return HttpMCPUpstream(upstream_url=settings.mcp_upstream_url)
-    return StreamableHttpMCPUpstream(upstream_url=settings.mcp_upstream_url)
+        return HttpMCPUpstream(upstream_url=url)
+    return StreamableHttpMCPUpstream(upstream_url=url)
+
+
+def _mcp_upstream(settings: Settings) -> MCPUpstream:
+    """One upstream, or several behind a routing adapter (ADR-0016).
+
+    `mcp_upstreams` deliberately takes precedence over `mcp_upstream_url`
+    rather than merging with it: silently folding the single-upstream default
+    (`http://localhost:8080`) into a configured fleet would add a phantom
+    member to every multi-upstream deployment.
+    """
+    if not settings.mcp_upstreams:
+        return _one_upstream(settings, settings.mcp_upstream_url)
+    return RoutingMCPUpstream(
+        {name: _one_upstream(settings, url) for name, url in settings.mcp_upstreams.items()},
+        cache_ttl_seconds=settings.mcp_route_cache_ttl_seconds,
+    )
 
 
 def _require_persistence(feature: str) -> NoReturn:

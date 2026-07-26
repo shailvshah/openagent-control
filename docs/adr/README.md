@@ -17,3 +17,6 @@
 | [0013](0013-vault-transit-signing-key-custody.md) | KMS-backed receipt signing via HashiCorp Vault Transit |
 | [0014](0014-control-plane-api-and-dashboard.md) | Control-plane API + dashboard, separate from the enforcing gateway |
 | [0015](0015-real-mcp-ingress-transport.md) | Real MCP ingress transport, mirroring ADR-0011's outgoing fix |
+| [0016](0016-multi-upstream-routing-and-listing-projection.md) | Many upstreams behind one gateway, and a listing that tells the truth |
+| [0017](0017-client-sdk-and-authorize-only-endpoint.md) | A client SDK, and the authorize-only endpoint it needs |
+| [0018](0018-dashboard-as-one-static-file.md) | The dashboard is one static file, not a SPA build |

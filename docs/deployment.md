@@ -25,7 +25,7 @@ That puts `openagent-control` on your PATH:
 | `openagent-control migrate` | Creates/upgrades the `oac` schema (requires `OAC_DATABASE_URL`) |
 | `openagent-control doctor` | Checks every dependency and exits non-zero if the gateway would not serve |
 | `openagent-control serve` | Runs the gateway |
-| `openagent-control serve-control-plane` | Runs the control-plane API + dashboard (ADR-0014) — a separate process, requires `OAC_DATABASE_URL` |
+| `openagent-control serve-control-plane` | Runs the control-plane API + dashboard (ADR-0014, ADR-0018) — a separate process, requires `OAC_DATABASE_URL` |
 
 ### Minimal run
 
@@ -101,6 +101,28 @@ different transport. `/mcp` runs stateless (a fresh transport per request,
 no session-affinity requirement across replicas — a deliberate v1 trade-off,
 see ADR-0015).
 
+`POST /api/v1/authorize` is the third surface, and the only one that does not
+proxy: it decides and receipts a call without running it, so an agent can keep
+its tool code where it is and ask "may I?" first. That is what
+`openagent_control.sdk`'s `@governed` decorator calls — see
+[ADR-0017](adr/0017-client-sdk-and-authorize-only-endpoint.md), including the
+security difference this trades away (no brokered credential, so it cannot
+make gateway bypass impossible the way the proxy path does).
+
+### Several MCP servers behind one gateway
+
+```bash
+export OAC_MCP_UPSTREAMS='{"finance":"http://finance:8080/mcp","crm":"http://crm:8080/mcp"}'
+```
+
+`tools/list` fans out and merges; `tools/call` routes to whichever upstream
+advertised the tool. Key order matters — on a tool-name collision the first
+listed wins. Unset (the default), `OAC_MCP_UPSTREAM_URL` is used exactly as
+before. See [ADR-0016](adr/0016-multi-upstream-routing-and-listing-projection.md).
+
+A listing is also projected down to each agent's registry grants, so an agent
+never discovers a tool it would only be denied for calling.
+
 ## Health endpoints
 
 | Endpoint | Meaning | Use for |
@@ -144,6 +166,13 @@ export OAC_DATABASE_URL=postgresql+asyncpg://user:pass@host/oac   # required —
 export OAC_CONTROL_PLANE_API_KEY=$(openssl rand -hex 32)
 openagent-control serve-control-plane --port 8001
 ```
+
+The dashboard is then at `http://localhost:8001/` — fleet counts, the agent
+table with suspend/activate, recent decisions, and a ledger-integrity check.
+It is one static file with no build step and no CDN, so it works in an
+airgapped deployment; sign in by pasting the same operator credential the API
+takes. See [ADR-0018](adr/0018-dashboard-as-one-static-file.md), including what
+it deliberately does *not* do (no browser OIDC redirect login yet).
 
 A separate process from the gateway (ADR-0014): registry CRUD, receipt
 search/verify, and fleet health, sharing the same Postgres. It never imports

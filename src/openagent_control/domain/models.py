@@ -100,6 +100,24 @@ class ExecutionReceipt(BaseModel):
     always enforced=True; see ADR-0012."""
 
 
+class AuthorizationOutcome(BaseModel):
+    """The result of deciding and receipting one tool call, before (or without)
+    executing it — the native-SDK pattern of ADR-0001.
+
+    `allowed` is the *effective* answer, not the policy's raw one: in shadow
+    mode (ADR-0012) a DENY is recorded and signed exactly as it would be, but
+    the call proceeds anyway, so `allowed` is True while `decision` says DENY
+    and `shadowed` says why. A caller that gates on `decision` instead of
+    `allowed` would silently re-enforce what shadow mode exists to suspend.
+    """
+
+    allowed: bool
+    decision: PolicyDecision
+    receipt: ExecutionReceipt
+    call: ToolCallRequest
+    shadowed: bool = False
+
+
 class AgentPatch(BaseModel):
     """Partial update to a RegisteredAgent's mutable facts, per ADR-0014.
 
@@ -130,3 +148,22 @@ class FleetSummary(BaseModel):
     agents_by_status: dict[str, int]
     receipts_last_24h_by_decision: dict[str, int]
     last_receipt_timestamp: datetime | None = None
+
+
+class FleetActivity(BaseModel):
+    """Aggregated fleet behaviour over a window, per ADR-0018.
+
+    Grouped by agent and denial reason, never by tool: receipts carry a payload
+    hash rather than the payload (ADR-0003), so what a call *was* is provable
+    but not readable. `truncated` is part of the answer rather than a footnote —
+    a count silently capped by a scan limit is worse than one labelled as a
+    lower bound.
+    """
+
+    window_hours: int
+    total_calls: int
+    calls_by_agent: dict[str, int]
+    denials_by_agent: dict[str, int]
+    denials_by_reason: dict[str, int]
+    shadowed_denials: int = 0
+    truncated: bool = False

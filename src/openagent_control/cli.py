@@ -186,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=cmd_serve)
 
     serve_control_plane = sub.add_parser(
-        "serve-control-plane", help="run the control-plane API + dashboard (ADR-0014)"
+        "serve-control-plane", help="run the control-plane API + dashboard (ADR-0014, ADR-0018)"
     )
     serve_control_plane.add_argument("--host", default="0.0.0.0")  # noqa: S104
     serve_control_plane.add_argument("--port", type=int, default=8001)

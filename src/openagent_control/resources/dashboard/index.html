@@ -1,0 +1,294 @@
+<!doctype html>
+<!--
+  The control-plane dashboard (ADR-0018).
+
+  One file, no build step, no CDN, no framework. Three reasons, in order of
+  weight: this service is meant to run inside a customer's trust boundary and
+  may have no egress at all, so an external script tag would make the page
+  blank in exactly the environments it was built for; a Vite/React app would
+  put a node toolchain and a lockfile of transitive dependencies in the release
+  path of a security product; and there is not enough UI here to earn either.
+
+  It reads the same /api/v1 endpoints an operator can curl. There is no
+  privileged back channel — anything this page can do, the API allows.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenAgent-Control</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e9ef;
+    --muted: #9aa4b8; --allow: #3fb950; --deny: #f85149; --accent: #58a6ff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --line: #e2e6ec; --text: #1c2128;
+      --muted: #5b6472; --allow: #1a7f37; --deny: #cf222e; --accent: #0969da;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  h2 { font-size: 12px; margin: 0 0 10px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  main { padding: 20px; display: grid; gap: 16px; max-width: 1200px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 10px; padding: 16px; }
+  .stat { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; }
+  .allow { color: var(--allow); } .deny { color: var(--deny); }
+  .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px;
+       text-transform: uppercase; letter-spacing: .05em; }
+  td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .scroll { overflow-x: auto; }
+  input, button, select {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px;
+  }
+  button { cursor: pointer; background: var(--accent); color: #fff; border-color: transparent; }
+  button.ghost { background: transparent; color: var(--muted); border-color: var(--line); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px;
+          font-size: 11px; font-weight: 600; border: 1px solid currentColor; }
+  .bar { height: 6px; border-radius: 3px; background: var(--accent); min-width: 2px; }
+  #error { display: none; border-color: var(--deny); color: var(--deny); }
+  #login { display: grid; gap: 10px; max-width: 460px; }
+  .spacer { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenAgent-Control</h1>
+  <span class="muted" id="subtitle">control plane</span>
+  <span class="spacer"></span>
+  <select id="window" title="Time window">
+    <option value="1">last hour</option>
+    <option value="24" selected>last 24h</option>
+    <option value="168">last 7 days</option>
+  </select>
+  <button class="ghost" id="refresh">Refresh</button>
+  <button class="ghost" id="signout" hidden>Sign out</button>
+</header>
+
+<main>
+  <div class="panel" id="error"></div>
+
+  <div class="panel" id="login">
+    <h2>Operator sign-in</h2>
+    <p class="muted" style="margin:0">
+      Paste an operator credential. With
+      <span class="mono">OAC_CONTROL_PLANE_OPERATOR_AUTH_MODE=api-key</span> this is
+      <span class="mono">OAC_CONTROL_PLANE_API_KEY</span>; with
+      <span class="mono">oidc-jwks</span> it is your OIDC access token. It is kept in
+      this tab's sessionStorage only, and sent as a bearer token — the page stores
+      nothing on the server.
+    </p>
+    <input id="token" type="password" placeholder="operator credential" autocomplete="off">
+    <button id="signin">Sign in</button>
+  </div>
+
+  <div id="app" hidden>
+    <div class="grid">
+      <div class="panel"><h2>Agents</h2><div class="stat" id="agents">—</div>
+        <div class="muted" id="agents-detail"></div></div>
+      <div class="panel"><h2>Allowed</h2><div class="stat allow" id="allowed">—</div>
+        <div class="muted" id="window-label"></div></div>
+      <div class="panel"><h2>Denied</h2><div class="stat deny" id="denied">—</div>
+        <div class="muted" id="shadow-detail"></div></div>
+      <div class="panel"><h2>Ledger integrity</h2><div class="stat" id="chain">—</div>
+        <div class="muted" id="chain-detail">not checked</div>
+        <button class="ghost" id="verify" style="margin-top:8px">Verify chain</button></div>
+    </div>
+
+    <div class="grid" style="margin-top:16px">
+      <div class="panel"><h2>Busiest agents</h2><div id="by-agent"></div></div>
+      <div class="panel"><h2>Why calls were denied</h2><div id="by-reason"></div></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2>Registered agents</h2>
+      <div class="scroll"><table id="agent-table">
+        <thead><tr><th>Identity</th><th>Name</th><th>Owner</th><th>Risk</th>
+          <th>Granted tools</th><th>Status</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2>Recent decisions</h2>
+      <div class="scroll"><table id="receipt-table">
+        <thead><tr><th>When</th><th>Agent</th><th>Decision</th><th>Reason</th>
+          <th>Receipt</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const KEY = "oac.operator.credential";
+
+function token() { return sessionStorage.getItem(KEY) || ""; }
+
+function showError(message) {
+  const box = $("error");
+  box.textContent = message;
+  box.style.display = message ? "block" : "none";
+}
+
+async function api(path) {
+  const response = await fetch(path, { headers: { Authorization: "Bearer " + token() } });
+  if (response.status === 401) {
+    // Distinguish "your credential is wrong" from "the server broke": signing
+    // the operator out on any error would hide real outages behind a login box.
+    sessionStorage.removeItem(KEY);
+    render();
+    throw new Error("Operator credential rejected (401). Check the value and sign in again.");
+  }
+  if (!response.ok) throw new Error(path + " returned " + response.status);
+  return response.json();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function barChart(counts) {
+  const entries = Object.entries(counts || {});
+  if (!entries.length) return '<p class="muted">Nothing in this window.</p>';
+  const max = Math.max(...entries.map(([, n]) => n));
+  return entries.map(([label, n]) => `
+    <div style="margin-bottom:9px">
+      <div style="display:flex;justify-content:space-between;gap:10px">
+        <span class="mono" style="overflow-wrap:anywhere">${escapeHtml(label) || "—"}</span>
+        <strong>${n}</strong>
+      </div>
+      <div class="bar" style="width:${Math.max(2, (n / max) * 100)}%"></div>
+    </div>`).join("");
+}
+
+async function setStatus(spiffeId, action) {
+  const response = await fetch(
+    `/api/v1/agents/${encodeURIComponent(spiffeId)}/${action}`,
+    { method: "POST", headers: { Authorization: "Bearer " + token() } }
+  );
+  if (!response.ok) { showError(`${action} failed: ${response.status}`); return; }
+  load();
+}
+
+async function load() {
+  showError("");
+  const hours = $("window").value;
+  try {
+    const [summary, activity, agents, receipts] = await Promise.all([
+      api("/api/v1/fleet/summary"),
+      api(`/api/v1/fleet/activity?hours=${hours}`),
+      api("/api/v1/agents"),
+      api("/api/v1/receipts?limit=25"),
+    ]);
+
+    const active = summary.agents_by_status.active || 0;
+    $("agents").textContent = agents.length;
+    $("agents-detail").textContent =
+      `${active} active, ${agents.length - active} suspended`;
+
+    const byDecision = summary.receipts_last_24h_by_decision || {};
+    $("allowed").textContent = byDecision.ALLOW || 0;
+    $("denied").textContent = byDecision.DENY || 0;
+    $("window-label").textContent = "last 24h";
+    $("shadow-detail").textContent = activity.shadowed_denials
+      ? `${activity.shadowed_denials} not enforced (shadow mode)`
+      : "last 24h";
+
+    $("by-agent").innerHTML = barChart(activity.calls_by_agent);
+    $("by-reason").innerHTML = barChart(activity.denials_by_reason);
+
+    $("agent-table").tBodies[0].innerHTML = agents.map((agent) => {
+      const suspended = agent.status !== "active";
+      return `<tr>
+        <td class="mono" style="overflow-wrap:anywhere">${escapeHtml(agent.spiffe_id)}</td>
+        <td>${escapeHtml(agent.display_name)}</td>
+        <td>${escapeHtml(agent.owner)}</td>
+        <td>${escapeHtml(agent.risk_tier)}</td>
+        <td class="mono">${escapeHtml((agent.granted_tools || []).join(", ")) || "—"}</td>
+        <td><span class="pill ${suspended ? "deny" : "allow"}">${escapeHtml(agent.status)}</span></td>
+        <td><button class="ghost" data-id="${escapeHtml(agent.spiffe_id)}"
+             data-action="${suspended ? "activate" : "suspend"}">
+             ${suspended ? "Activate" : "Suspend"}</button></td>
+      </tr>`;
+    }).join("") || '<tr><td colspan="7" class="muted">No agents registered.</td></tr>';
+
+    $("receipt-table").tBodies[0].innerHTML = receipts.map((r) => `
+      <tr>
+        <td class="mono">${escapeHtml(new Date(r.timestamp).toLocaleString())}</td>
+        <td class="mono" style="overflow-wrap:anywhere">${escapeHtml(r.spiffe_id)}</td>
+        <td><span class="pill ${r.decision === "ALLOW" ? "allow" : "deny"}">${escapeHtml(r.decision)}</span>
+            ${r.enforced === false ? '<span class="muted"> shadow</span>' : ""}</td>
+        <td>${escapeHtml(r.reason) || "—"}</td>
+        <td class="mono">${escapeHtml(r.sequence_id.slice(0, 8))}</td>
+      </tr>`).join("") || '<tr><td colspan="5" class="muted">No receipts yet.</td></tr>';
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function verifyChain() {
+  $("chain-detail").textContent = "checking…";
+  try {
+    const result = await api("/api/v1/receipts/verify-chain");
+    $("chain").textContent = result.valid ? "Intact" : "BROKEN";
+    $("chain").className = "stat " + (result.valid ? "allow" : "deny");
+    $("chain-detail").textContent = result.valid
+      ? `${result.receipts_checked} receipts verified`
+      : `first break at ${result.first_broken_sequence_id}`;
+  } catch (err) {
+    $("chain-detail").textContent = "";
+    showError(err.message);
+  }
+}
+
+function render() {
+  const signedIn = Boolean(token());
+  $("login").hidden = signedIn;
+  $("app").hidden = !signedIn;
+  $("signout").hidden = !signedIn;
+  if (signedIn) load();
+}
+
+$("signin").onclick = () => {
+  const value = $("token").value.trim();
+  if (!value) return;
+  sessionStorage.setItem(KEY, value);
+  $("token").value = "";
+  render();
+};
+$("token").onkeydown = (e) => { if (e.key === "Enter") $("signin").click(); };
+$("signout").onclick = () => { sessionStorage.removeItem(KEY); render(); };
+$("refresh").onclick = load;
+$("window").onchange = load;
+$("verify").onclick = verifyChain;
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (button) setStatus(button.dataset.id, button.dataset.action);
+});
+
+render();
+</script>
+</body>
+</html>

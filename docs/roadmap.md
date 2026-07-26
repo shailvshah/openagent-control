@@ -30,19 +30,23 @@ publishes to PyPI via Trusted Publishing on a tag. See
   separate from the enforcing gateway: registry CRUD, receipt search/verify,
   fleet health. Same self-hosted posture as the gateway (ADR discussion,
   2026-07-25) — the vendor never holds the token-exchange secret or sits in
-  the customer's data path. **The API is done (ADR-0014); the dashboard SPA
-  is not started yet.** Tracked below.
+  the customer's data path. **Both are now done** — the API in ADR-0014, the
+  dashboard in ADR-0018 (one static file, no build step, no CDN, so it works
+  airgapped). Remaining: browser OIDC redirect login.
 
 ## Scope decisions from the integrations discussion (2026-07-25)
 
 Four integration axes were named as in scope, none started yet:
 
-- **Agent-framework SDK plugins** — a decorator/plugin surface embedded in an
-  agent framework's own call sites, routing those calls through this
-  project's identity, policy, and audit path. This is a new SDK package, not
-  an extension of the gateway — its own distribution, versioning, and
-  framework-conformance testing (same "verify against the real framework"
-  discipline as everything else here).
+- ~~**Agent-framework SDK plugins**~~ — **done** (ADR-0017).
+  `openagent_control.sdk` ships in the same wheel rather than as a separate
+  distribution: it shares the domain error shapes and the gateway's own
+  contract, and a second release cadence would buy nothing. `@governed`
+  gates a function the agent already has (via the new authorize-only endpoint,
+  `POST /api/v1/authorize`), `GovernedClient` proxies to MCP-hosted tools, and
+  `sdk.langchain` supplies both shapes as LangChain tools. Conformance-tested
+  against **real LangChain and a real compiled LangGraph graph**, which is what
+  caught proxied tools shipping no argument schema.
 - **Enterprise target-system adapters** — Phase 3's response-side filtering,
   already on the roadmap above. Needs a real sandbox/trial account per system
   to verify against before it can ship.
@@ -52,11 +56,34 @@ Four integration axes were named as in scope, none started yet:
 - **Control-plane API + dashboard docs** — document the API/dashboard above
   once built.
 
-**Sequencing (2026-07-25): control-plane API + dashboard next**, once OTel
-spans land — no external sandbox required (just this project's own Postgres),
-and it makes the other three easier to demo (e.g. an approval-channel adapter
-has somewhere to surface into). The SDK-plugin work and the two
-sandbox-dependent adapters remain explicitly queued behind it, not started.
+**Sequencing update (2026-07-26):** the control-plane API, the dashboard, and
+the SDK plugins are all done. The two remaining axes (enterprise target-system
+adapters, approval-channel adapters) each still need a real sandbox or tenant
+account to verify against, which is the only thing blocking them — this project
+does not ship an adapter it has not run against the real system.
+
+## Adoption work from the three-goal audit (2026-07-26)
+
+An audit against "could a team point an agent already running in production at
+this?" found three defects, all now fixed and each covered by an ADR:
+
+- **One gateway could front exactly one MCP server.** Real agents call several.
+  `RoutingMCPUpstream` merges `tools/list` across N upstreams and routes
+  `tools/call` to whichever advertised the tool (ADR-0016), verified against
+  two real MCP servers behind one real gateway.
+- **The gateway advertised tools it would refuse to run.** A listing is now
+  projected down to the agent's registry grants, so discovery cannot promise
+  what policy will deny (ADR-0016).
+- **The shipped Rego required a hand-written rule per tool**, so a registry
+  grant was silently insufficient and every new tool needed a policy edit.
+  Guardrails now only *narrow* a grant. Found by an integration test, and it
+  also revealed that the Rego rules had **no automated coverage at all** —
+  every policy test mocked OPA's HTTP response. `tests/integration/test_rego_policy.py`
+  now evaluates them against a real `opa` process.
+
+One documentation defect was fixed first, before any of it: `cli.py`,
+`deployment.md`, and a route docstring all described a dashboard that did not
+exist. A promise in the CLI is worse than a gap in the roadmap.
 
 ## Where we are, phase by phase
 
@@ -64,7 +91,7 @@ sandbox-dependent adapters remain explicitly queued behind it, not started.
 |---|---|---|---|---|
 | 1. Agent Registry & Identity Plane | M1-2 | 🟢 ~90% | **Master Agent Registry**, now a real system of record (ADR-0008 + ADR-0009): `PostgresAgentRegistry` (`oac.agents` table, own schema, timestamps incl. `status_changed_at`) is the production adapter; `FileAgentRegistry`/YAML remains the zero-dependency dev default and import source. Orphaned or suspended agents get a *receipted* DENY; Rego holds only logic. Registry reads are Redis-cached (30s TTL) so the hot path doesn't hit Postgres every call. **IdP adapters**: RFC 8693 (Okta-compatible) + Entra OBO token exchange, with exchanged tokens Redis-cached to their own `exp` (minus safety margin). **Identity validation, three real paths**: `JwtSvidIdentityProvider` (SPIFFE JWT-SVIDs) and, new, `OidcJwksIdentityProvider` (ADR-0010) — validates actual Okta/Entra-issued access tokens against their published JWKS (signature, issuer, audience, orphan-agent checks), built from a dedicated `enterprise-idp-integration` skill and verified against real signed tokens over a locally served JWKS — see `examples/oidc_identity_demo/` | Actual SPIRE server/agent deployment + Workload API (x509) attestation; an admin/kill-switch API to write registry status changes (Postgres makes this buildable, but nothing calls it yet — cache TTL is the only revocation-latency bound today); JWKS/trust-bundle rotation cadence tuning; tenant-independent Entra multi-tenant validation (signing-key-issuer-scope check, flagged as a gap in ADR-0010); live validation against a real Okta org or Entra tenant specifically — though the identity and RFC 8693 adapters are now conformance-tested against a real third-party IdP (Keycloak 26.4, `tests/integration/test_keycloak_conformance.py`), which caught a genuine app-only-token misclassification bug |
 | 2. MCP Gateway in Shadow Mode | M3 | 🟢 ~80% | The full enforcing gateway: interception, OPA evaluation, fail-closed denials, semantic error payloads, Ed25519 hash-chained receipts, durably persisted and replica-safe (`PostgresLedger`, row-locked chain head). Now verified against a **fully real stack** (`examples/enterprise_scenario/` + `tests/integration/`): real OIDC identity, real `opa` process, real RFC 8693 exchange, and a real MCP server that validates the brokered credential's audience and scope — which is what makes the **gateway-bypass refusal** demonstrable rather than asserted. Credential brokering now covers autonomous agents too (previously a placeholder string no real upstream would accept). **The gateway now speaks real MCP transport in both directions.** Outgoing (ADR-0011): the previous upstream adapter POSTed bare JSON-RPC, which any genuine MCP server rejects with 406; verified against GitHub's production MCP server. Incoming (ADR-0015, closing the mirror-image gap ADR-0011 left on this side): `POST /mcp` now exposes the gateway itself as a real MCP server (handshake, session, SSE) via the same SDK, so a genuine MCP client — not just an internal caller that already speaks bare JSON-RPC to `/mcp/v1` — can connect directly. Verified against the **real MCP SDK client** driving the full real stack (real OPA, real auth server, real downstream MCP server, real gateway process). **OpenTelemetry spans now real**: `GovernedExecutionService` emits a root span plus `identify`/`registry.lookup`/`policy_evaluate`/`broker_credential`/`forward` child spans, exported via OTLP/HTTP when `OAC_OTEL_ENABLED=true` and verified against a real local `otelcol` binary receiving and parsing the actual wire protocol, not the SDK's in-memory exporter | Envoy sidecar variant (ADR-0001 Pattern A); policy-baselining tooling from observed traffic; **MCP session pooling** — one session per tool call costs an extra initialize round trip, unmeasured under load (ADR-0011) |
-| 3. Ethical Walls & Read-Only Enforcement | M4 | 🟠 ~25% | Request-side ABAC: per-identity capability grants + argument thresholds in OPA; deny enforcement live | **Response-side filtering** (stripping data the sponsor isn't cleared for); `tools/list` filtering (claimed in ADR-0004, not implemented); read/write action classification in policy; iManage/NetDocuments/ target adapters |
+| 3. Ethical Walls & Read-Only Enforcement | M4 | 🟠 ~25% | Request-side ABAC: per-identity capability grants + argument thresholds in OPA; deny enforcement live | **Response-side filtering** (stripping data the sponsor isn't cleared for) — the remaining half; ~~`tools/list` filtering~~ **done** (ADR-0016: a listing is projected down to the agent's registry grants, so discovery never promises what policy will deny); read/write action classification in policy; iManage/NetDocuments/ target adapters |
 | 4. Sandboxing & Business Diffs | M5-6 | 🟡 ~25% | `ApprovalChannel` port declared (no implementation); receipts are chained, signed, **and durable across restarts/replicas** (ADR-0009); **KMS-backed signing key now real** (ADR-0013): `signing_key_mode=vault-transit` never lets the Ed25519 key leave HashiCorp Vault, verified against a real Vault dev server | MicroVM/sandbox execution for writes; Business Diff generation; Slack/Teams approval adapters; **sequence sealing** API (concept in ADR-0003, no endpoint); production Vault operations (HA, unsealing, backup) are explicitly out of this project's scope per ADR-0013 — it treats Vault as an operated external dependency, same as Postgres |
 | 5. Chargebacks & Compliance Reporting | M7+ | 🔴 0% | Receipt schema carries what a billing/compliance export would need | Everything: Elite 3E integration, value telemetry, SOC 2 / EU AI Act export generation |
 
@@ -108,8 +135,7 @@ In dependency order — each unblocks the phase next to it:
    AWS KMS and Azure Key Vault were considered and ruled out: neither supports
    Ed25519 asymmetric signing, so either would force reopening ADR-0003's
    algorithm choice rather than just relocating the key.
-7. **Control-plane API** — **done** for the JSON API (ADR-0014); the
-   dashboard SPA is the remaining piece. `openagent-control serve-control-plane`
+7. **Control-plane API + dashboard** — **done** (ADR-0014, ADR-0018). `openagent-control serve-control-plane`
    runs a separate, self-hosted service — registry CRUD, receipt search/verify,
    fleet health — backed by the same Postgres, sharing nothing else with the
    enforcing gateway (it never imports `GovernedExecutionService`, the policy
@@ -134,10 +160,15 @@ In dependency order — each unblocks the phase next to it:
    `signing_key_mode=vault-transit`; the default `in-process` mode gives the
    gateway and the control plane independent random keys, so the control plane
    can search/list receipts either way but can't verify signatures the
-   gateway's process produced without a shared key. Not yet built: the
-   dashboard SPA itself (a Vite/React app served as static assets from the
-   same service) and its browser-appropriate OIDC login (session cookie, on
-   top of the same operator-identity port).
+   gateway's process produced without a shared key. The dashboard now exists too (ADR-0018), but
+   deliberately not as the Vite/React SPA this line previously anticipated:
+   one static HTML file, no build step and no CDN, because the service is
+   meant to run inside a customer's trust boundary and may have no egress —
+   and because a node toolchain in the release path of a security product is a
+   real cost to justify for four numbers and two tables. Still not built: the
+   browser-appropriate OIDC redirect login (session cookie, on top of the same
+   operator-identity port). The dashboard signs in with the same operator
+   credential the API takes, held in the tab's sessionStorage.
 
 ## Honest framing
 

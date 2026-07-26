@@ -120,11 +120,17 @@ async def test_real_mcp_client_handshake_and_granted_call_returns_real_rows(stac
 
 
 @pytest.mark.asyncio
-async def test_real_mcp_client_list_tools_reflects_the_real_upstream(stack: Stack) -> None:
+async def test_real_mcp_client_list_tools_shows_only_granted_tools(stack: Stack) -> None:
+    """The listing is projected down to the registry's grants (ADR-0016), so a
+    drop-in agent never discovers a tool it would only be denied for calling.
+
+    The real upstream advertises `update_record`; this agent's registry record
+    grants only `read_query`, and the real MCP client must see just that.
+    """
     async with connect(stack.mcp_ingress_url, stack.headers()) as session:
         listing = await session.list_tools()
 
-        assert {t.name for t in listing.tools} >= {"read_query", "update_record"}
+        assert {t.name for t in listing.tools} == {"read_query"}
 
 
 @pytest.mark.asyncio

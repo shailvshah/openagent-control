@@ -81,8 +81,24 @@ def test_wheel_ships_the_files_the_runtime_needs(wheel: Path) -> None:
 
     assert "openagent_control/resources/policies/mcp_authz.rego" in names
     assert "openagent_control/resources/agents.example.yaml" in names
+    # The dashboard is HTML the control plane reads at runtime (ADR-0018), so
+    # it fails exactly the way the Rego and the registry would if omitted.
+    assert "openagent_control/resources/dashboard/index.html" in names
     assert "openagent_control/alembic.ini" in names
     assert any(n.startswith("openagent_control/migrations/versions/") for n in names)
+
+
+def test_wheel_ships_the_sdk_a_client_installs_it_for(wheel: Path) -> None:
+    """The SDK is the reason most people will `pip install` this at all
+    (ADR-0017) — an agent process installs the package for the client, not the
+    server. `langchain.py` must ship too, even though LangChain itself is not a
+    dependency: it imports lazily and explains itself if LangChain is absent."""
+    names = set(zipfile.ZipFile(wheel).namelist())
+
+    assert "openagent_control/sdk/__init__.py" in names
+    assert "openagent_control/sdk/client.py" in names
+    assert "openagent_control/sdk/decorator.py" in names
+    assert "openagent_control/sdk/langchain.py" in names
 
 
 def test_cli_is_on_path(installed: Path) -> None:

@@ -362,3 +362,90 @@ async def test_enforce_mode_never_shadows_a_deny() -> None:
     assert "error" in result
     assert upstream.credentials == []
     assert exporter.receipts[0].enforced is True
+
+
+class ListingUpstream:
+    """An upstream advertising a full catalogue, as a real shared MCP server does."""
+
+    def __init__(self, tools: list[str]) -> None:
+        self._tools = tools
+
+    async def forward(self, request: ToolCallRequest, credential: str) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.request_id,
+            "result": {"tools": [{"name": t, "description": t} for t in self._tools]},
+        }
+
+
+_LIST_PAYLOAD: dict[str, Any] = {"jsonrpc": "2.0", "id": 9, "method": "tools/list", "params": {}}
+
+
+@pytest.mark.asyncio
+async def test_tools_list_is_projected_down_to_the_registrys_grants() -> None:
+    """Advertising the upstream's whole catalogue would have the agent discover
+    tools it can only be denied for calling — see ADR-0016."""
+    upstream = ListingUpstream(["read_query", "update_record", "delete_everything"])
+    service, _, _ = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        upstream=upstream,  # type: ignore[arg-type]
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _LIST_PAYLOAD)
+
+    assert [t["name"] for t in result["result"]["tools"]] == ["read_query"]
+
+
+@pytest.mark.asyncio
+async def test_listing_projection_preserves_the_rest_of_the_result() -> None:
+    """Only `tools` is filtered; pagination cursors and any other fields the
+    upstream returned must survive, or a paging client silently breaks."""
+
+    class PagedUpstream:
+        async def forward(self, request: ToolCallRequest, credential: str) -> dict[str, Any]:
+            return {
+                "jsonrpc": "2.0",
+                "id": request.request_id,
+                "result": {"tools": [{"name": "read_query"}], "nextCursor": "abc"},
+            }
+
+    service, _, _ = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        upstream=PagedUpstream(),  # type: ignore[arg-type]
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _LIST_PAYLOAD)
+
+    assert result["result"]["nextCursor"] == "abc"
+
+
+@pytest.mark.asyncio
+async def test_a_tools_call_result_is_never_touched_by_the_projection() -> None:
+    service, _, _ = _service(FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)))
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert result["result"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_an_upstream_error_response_passes_through_the_projection_untouched() -> None:
+    """A JSON-RPC error carries no `result`; rewriting it into an empty tool
+    list would turn an upstream failure into a silent "you have no tools"."""
+
+    class ErroringUpstream:
+        async def forward(self, request: ToolCallRequest, credential: str) -> dict[str, Any]:
+            return {
+                "jsonrpc": "2.0",
+                "id": request.request_id,
+                "error": {"code": -32603, "message": "upstream exploded"},
+            }
+
+    service, _, _ = _service(
+        FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)),
+        upstream=ErroringUpstream(),  # type: ignore[arg-type]
+    )
+
+    result = await service.execute({"x-spiffe-id": _AGENT}, _LIST_PAYLOAD)
+
+    assert result["error"]["message"] == "upstream exploded"

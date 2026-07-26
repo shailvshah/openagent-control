@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response, status
+from fastapi.responses import HTMLResponse
 
 from openagent_control.config import Settings
 from openagent_control.control_plane.dependencies import build_control_plane_container
@@ -11,6 +12,7 @@ from openagent_control.control_plane.routes.agents import router as agents_route
 from openagent_control.control_plane.routes.fleet import router as fleet_router
 from openagent_control.control_plane.routes.receipts import router as receipts_router
 from openagent_control.diagnostics import run_all
+from openagent_control.resources import dashboard_index
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -34,6 +36,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agents_router)
     app.include_router(receipts_router)
     app.include_router(fleet_router)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard() -> HTMLResponse:
+        """The dashboard (ADR-0018) — deliberately unauthenticated, because it
+        is a static file containing no data. Every figure on it is fetched by
+        the browser from /api/v1, which does require an operator credential, so
+        an unauthenticated visitor sees an empty sign-in box and nothing else.
+        Gating the HTML itself would imply a protection it does not provide."""
+        return HTMLResponse(dashboard_index().read_text(encoding="utf-8"))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

@@ -47,6 +47,17 @@ def example_registry() -> Path:
     return _path("agents.example.yaml")
 
 
+def dashboard_index() -> Path:
+    """The control-plane dashboard's single HTML file (ADR-0018).
+
+    Packaged here, alongside the policies, for the same reason they are: a
+    file the running process needs at runtime and a wheel would otherwise omit
+    — verified by tests/integration/test_packaging.py, which is what catches
+    exactly that mistake.
+    """
+    return _path("dashboard", "index.html")
+
+
 def alembic_ini() -> Path:
     root = Path(str(resources.files("openagent_control")))
     return root / "alembic.ini"

@@ -9,6 +9,7 @@ from openagent_control.config import Settings
 from openagent_control.diagnostics import run_all
 from openagent_control.gateway.dependencies import build_container
 from openagent_control.gateway.mcp_server import build_mcp_asgi_app
+from openagent_control.gateway.routes.authorize import router as authorize_router
 from openagent_control.gateway.routes.mcp import router as mcp_router
 
 
@@ -30,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # registration order, so the exact-path route here always wins over the
     # mount for that one path. See docs/adr/0015.
     app.include_router(mcp_router)
+    app.include_router(authorize_router)
     app.mount("/mcp", mcp_asgi_app)
 
     @app.get("/healthz")

@@ -11,6 +11,22 @@ class Settings(BaseSettings):
     opa_url: str = "http://localhost:8181/v1/data/openagent/authz"
     mcp_upstream_url: str = "http://localhost:8080"
 
+    mcp_upstreams: dict[str, str] = {}
+    """Several downstream MCP servers behind one gateway, as name -> URL
+    (ADR-0016). Set it as JSON:
+
+        OAC_MCP_UPSTREAMS='{"finance":"http://finance:8080/mcp","crm":"http://crm:8080/mcp"}'
+
+    When non-empty this takes precedence over `mcp_upstream_url`: tools/list
+    fans out and merges, tools/call routes to whichever upstream advertised the
+    tool. Key order is load-bearing — on a tool-name collision the first
+    upstream listed wins. Empty (the default) keeps the single-upstream
+    behaviour, so an existing deployment is unaffected."""
+
+    mcp_route_cache_ttl_seconds: float = 300.0
+    """How long the tool -> upstream routing table is reused before another
+    fan-out. Only consulted when `mcp_upstreams` is set."""
+
     mcp_upstream_mode: Literal["streamable-http", "raw-jsonrpc"] = "streamable-http"
     """"streamable-http" speaks the real MCP transport via the official SDK
     (initialize handshake, session ids, SSE) and is what any genuine MCP server

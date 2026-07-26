@@ -254,3 +254,54 @@ def test_operator_auth_mode_oidc_selects_oidc_operator_auth(
     auth = _operator_auth(settings)
 
     assert isinstance(auth, _FakeOidcOperatorAuth)
+
+
+# --- dashboard + aggregates (ADR-0018) -------------------------------------
+
+
+def test_the_dashboard_is_served_as_a_self_contained_page(client: TestClient) -> None:
+    """One file, no build step. The assertions that matter are the negative
+    ones: an external script or stylesheet would leave the page blank in an
+    airgapped deployment, which is exactly where this service is meant to run."""
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    body = response.text
+    assert "OpenAgent-Control" in body
+    assert 'src="http' not in body
+    assert 'href="http' not in body
+
+
+def test_the_dashboard_page_itself_needs_no_credential(client: TestClient) -> None:
+    """It contains no data — every figure on it is fetched from /api/v1, which
+    does require one. Gating the HTML would imply a protection it lacks."""
+    assert client.get("/").status_code == 200
+    assert client.get("/api/v1/fleet/activity").status_code == 401
+
+
+def test_fleet_activity_is_empty_but_well_formed_with_no_traffic(client: TestClient) -> None:
+    response = client.get("/api/v1/fleet/activity", headers=_AUTH_HEADER)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_calls"] == 0
+    assert body["denials_by_reason"] == {}
+    assert body["truncated"] is False
+    assert body["window_hours"] == 24
+
+
+def test_fleet_activity_honours_the_requested_window(client: TestClient) -> None:
+    body = client.get("/api/v1/fleet/activity?hours=168", headers=_AUTH_HEADER).json()
+
+    assert body["window_hours"] == 168
+
+
+def test_fleet_activity_reports_truncation_rather_than_under_counting(
+    client: TestClient,
+) -> None:
+    """A count silently capped by the scan limit is worse than one labelled a
+    lower bound — an operator would read "3 denials" and believe it."""
+    body = client.get("/api/v1/fleet/activity?limit=0", headers=_AUTH_HEADER).json()
+
+    assert body["truncated"] is True
