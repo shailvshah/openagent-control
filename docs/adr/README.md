@@ -16,3 +16,4 @@
 | [0012](0012-shadow-mode-for-first-deployment.md) | Shadow (observe) mode as a decision, not a bypass |
 | [0013](0013-vault-transit-signing-key-custody.md) | KMS-backed receipt signing via HashiCorp Vault Transit |
 | [0014](0014-control-plane-api-and-dashboard.md) | Control-plane API + dashboard, separate from the enforcing gateway |
+| [0015](0015-real-mcp-ingress-transport.md) | Real MCP ingress transport, mirroring ADR-0011's outgoing fix |

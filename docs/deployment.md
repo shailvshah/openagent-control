@@ -89,6 +89,18 @@ The registry is mounted **read-only** so the gateway cannot rewrite its own
 allowlist, and OPA mounts the policy directory straight out of the package so
 the container and a pip install evaluate identical Rego.
 
+## MCP endpoints
+
+| Endpoint | Protocol | Use for |
+|---|---|---|
+| `POST /mcp` (also GET/DELETE for the session lifecycle) | Real MCP Streamable HTTP (handshake, session, SSE) via the official SDK | A genuine MCP client — the SDK's own client, LangChain's MCP adapter, Claude, etc. See [ADR-0015](adr/0015-real-mcp-ingress-transport.md). |
+| `POST /mcp/v1` | Bare JSON-RPC over HTTPS, not real MCP transport | An internal caller that already speaks plain JSON-RPC and doesn't need real MCP semantics (ADR-0011's `raw-jsonrpc` framing, now stated symmetrically for the incoming side). |
+
+Both point at the same `GovernedExecutionService` — identical governance,
+different transport. `/mcp` runs stateless (a fresh transport per request,
+no session-affinity requirement across replicas — a deliberate v1 trade-off,
+see ADR-0015).
+
 ## Health endpoints
 
 | Endpoint | Meaning | Use for |
