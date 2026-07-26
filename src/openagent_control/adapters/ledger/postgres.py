@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from openagent_control.adapters.db.tables import ChainStateRow, ReceiptRow
-from openagent_control.adapters.ledger.signing import ReceiptSigner, canonical_json
+from openagent_control.adapters.ledger.signing import Signer, canonical_json
 from openagent_control.domain.models import (
     AgentIdentity,
     ExecutionReceipt,
@@ -27,9 +27,7 @@ from openagent_control.domain.models import (
 
 
 class PostgresLedger:
-    def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession], signer: ReceiptSigner
-    ) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], signer: Signer) -> None:
         self._session_factory = session_factory
         self._signer = signer
 

@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -186,3 +187,25 @@ def test_raw_jsonrpc_mode_selects_the_plain_http_adapter() -> None:
     )
 
     assert isinstance(container.mcp_upstream, HttpMCPUpstream)
+
+
+def test_default_signing_key_mode_is_in_process() -> None:
+    container = build_container(Settings())
+
+    assert isinstance(container.ledger, Ed25519ChainLedger)
+    # The default signer must actually be usable without any external config.
+    container.ledger.public_key()
+
+
+def test_vault_transit_mode_fails_fast_when_vault_is_unreachable() -> None:
+    """ADR-0013: an unreachable Vault must fail at startup, not surface as a
+    silent per-request signing failure later."""
+    with pytest.raises(httpx.HTTPError):
+        build_container(
+            Settings(
+                signing_key_mode="vault-transit",
+                vault_url="http://127.0.0.1:1",
+                vault_token="x",
+                vault_transit_key_name="whatever",
+            )
+        )

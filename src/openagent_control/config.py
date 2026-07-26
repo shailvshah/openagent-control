@@ -74,3 +74,14 @@ class Settings(BaseSettings):
     registry_cache_ttl_seconds: int = 30
     token_cache_max_ttl_seconds: int = 300
     token_cache_safety_margin_seconds: int = 30
+
+    signing_key_mode: Literal["in-process", "vault-transit"] = "in-process"
+    """"in-process" (default) generates an Ed25519 key in memory, lost on
+    restart — receipts are signed, but the key isn't compliance-grade custody.
+    "vault-transit" signs via HashiCorp Vault's Transit engine: the private key
+    never leaves Vault, this process only ever sees signatures. See ADR-0013
+    for why Vault specifically (AWS KMS and Azure Key Vault don't support
+    Ed25519 asymmetric signing)."""
+    vault_url: str = "http://localhost:8200"
+    vault_token: str = ""
+    vault_transit_key_name: str = "oac-receipt-signer"

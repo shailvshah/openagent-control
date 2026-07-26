@@ -39,7 +39,7 @@ publishes to PyPI via Trusted Publishing on a tag. See
 | 1. Agent Registry & Identity Plane | M1-2 | 🟢 ~90% | **Master Agent Registry**, now a real system of record (ADR-0008 + ADR-0009): `PostgresAgentRegistry` (`oac.agents` table, own schema, timestamps incl. `status_changed_at`) is the production adapter; `FileAgentRegistry`/YAML remains the zero-dependency dev default and import source. Orphaned or suspended agents get a *receipted* DENY; Rego holds only logic. Registry reads are Redis-cached (30s TTL) so the hot path doesn't hit Postgres every call. **IdP adapters**: RFC 8693 (Okta-compatible) + Entra OBO token exchange, with exchanged tokens Redis-cached to their own `exp` (minus safety margin). **Identity validation, three real paths**: `JwtSvidIdentityProvider` (SPIFFE JWT-SVIDs) and, new, `OidcJwksIdentityProvider` (ADR-0010) — validates actual Okta/Entra-issued access tokens against their published JWKS (signature, issuer, audience, orphan-agent checks), built from a dedicated `enterprise-idp-integration` skill and verified against real signed tokens over a locally served JWKS — see `examples/oidc_identity_demo/` | Actual SPIRE server/agent deployment + Workload API (x509) attestation; an admin/kill-switch API to write registry status changes (Postgres makes this buildable, but nothing calls it yet — cache TTL is the only revocation-latency bound today); JWKS/trust-bundle rotation cadence tuning; tenant-independent Entra multi-tenant validation (signing-key-issuer-scope check, flagged as a gap in ADR-0010); live validation against a real Okta org or Entra tenant specifically — though the identity and RFC 8693 adapters are now conformance-tested against a real third-party IdP (Keycloak 26.4, `tests/integration/test_keycloak_conformance.py`), which caught a genuine app-only-token misclassification bug |
 | 2. MCP Gateway in Shadow Mode | M3 | 🟢 ~75% | The full enforcing gateway: interception, OPA evaluation, fail-closed denials, semantic error payloads, Ed25519 hash-chained receipts, durably persisted and replica-safe (`PostgresLedger`, row-locked chain head). Now verified against a **fully real stack** (`examples/enterprise_scenario/` + `tests/integration/`): real OIDC identity, real `opa` process, real RFC 8693 exchange, and a real MCP server that validates the brokered credential's audience and scope — which is what makes the **gateway-bypass refusal** demonstrable rather than asserted. Credential brokering now covers autonomous agents too (previously a placeholder string no real upstream would accept). **The gateway also speaks the real MCP transport** via the official MCP SDK (ADR-0011) — the previous adapter POSTed bare JSON-RPC, which any genuine MCP server rejects with 406; verified against GitHub's production MCP server | **Shadow/dry-run mode itself** (a `decision_mode: enforce\|observe` setting that logs would-be denials without blocking); OpenTelemetry spans (dependency declared, unused); Envoy sidecar variant (ADR-0001 Pattern A); policy-baselining tooling from observed traffic; **MCP session pooling** — one session per tool call costs an extra initialize round trip, unmeasured under load (ADR-0011) |
 | 3. Ethical Walls & Read-Only Enforcement | M4 | 🟠 ~25% | Request-side ABAC: per-identity capability grants + argument thresholds in OPA; deny enforcement live | **Response-side filtering** (stripping data the sponsor isn't cleared for); `tools/list` filtering (claimed in ADR-0004, not implemented); read/write action classification in policy; iManage/NetDocuments/DealCloud target adapters |
-| 4. Sandboxing & Business Diffs | M5-6 | 🟡 ~20% | `ApprovalChannel` port declared (no implementation); receipts are chained, signed, **and durable across restarts/replicas** (ADR-0009 closed the ADR-0003 gap on chain state) | MicroVM/sandbox execution for writes; Business Diff generation; Slack/Teams approval adapters; **sequence sealing** API (concept in ADR-0003, no endpoint); KMS/HSM-backed signing key — the signer is now caller-supplied (`ReceiptSigner`) but still generated in-process by default, not yet KMS-backed |
+| 4. Sandboxing & Business Diffs | M5-6 | 🟡 ~25% | `ApprovalChannel` port declared (no implementation); receipts are chained, signed, **and durable across restarts/replicas** (ADR-0009); **KMS-backed signing key now real** (ADR-0013): `signing_key_mode=vault-transit` never lets the Ed25519 key leave HashiCorp Vault, verified against a real Vault dev server | MicroVM/sandbox execution for writes; Business Diff generation; Slack/Teams approval adapters; **sequence sealing** API (concept in ADR-0003, no endpoint); production Vault operations (HA, unsealing, backup) are explicitly out of this project's scope per ADR-0013 — it treats Vault as an operated external dependency, same as Postgres |
 | 5. Chargebacks & Compliance Reporting | M7+ | 🔴 0% | Receipt schema carries what a billing/compliance export would need | Everything: Intapp Time / Elite 3E integration, value telemetry, SOC 2 / EU AI Act export generation |
 
 ## The critical path to starting Month 1 for real
@@ -64,12 +64,17 @@ In dependency order — each unblocks the phase next to it:
    multi-tenant validation; the header mode remains dev-only per ADR-0005.
 5. **OTel wiring** — Phase 2's whole purpose is telemetry; the dependency is in
    `pyproject.toml` but no spans are emitted.
-6. **Signing key custody** — shared chain state is done (ADR-0009):
-   `PostgresLedger` persists receipts and serializes the chain head with a row
-   lock, correct across replicas and restarts. **Key custody remains open**:
-   `ReceiptSigner` accepts an injected key, but nothing yet sources one from a
-   KMS/HSM — this is the single biggest gap between "signed receipt" and
-   "compliance-grade evidence," and the top priority of the current pass.
+6. ~~Signing key custody~~ — **done** (ADR-0013): shared chain state (ADR-0009)
+   plus a `Signer` port with a real HashiCorp Vault Transit adapter
+   (`signing_key_mode=vault-transit`) — the private Ed25519 key never leaves
+   Vault, verified against a real local Vault dev server (sign, then
+   independently verify with `cryptography` against Vault's own returned
+   public key, plus a full `Ed25519ChainLedger` sign-and-chain cycle).
+   `in-process` (regenerated on restart) remains the default, same posture as
+   `identity_mode=header` — a documented dev stub, not silently good enough.
+   AWS KMS and Azure Key Vault were considered and ruled out: neither supports
+   Ed25519 asymmetric signing, so either would force reopening ADR-0003's
+   algorithm choice rather than just relocating the key.
 7. **Control-plane API + dashboard** (scoped 2026-07-26, not started): a
    separate, self-hosted service — registry CRUD, receipt search/verify, fleet
    health — backed by the same Postgres. Deliberately not merged into the
@@ -93,6 +98,8 @@ needs on day one is done.
 
 The end-to-end path is now proven against real components rather than fakes —
 see `examples/enterprise_scenario/`. Its stated limits are the honest ones: the
-IdP and the downstream API run on localhost rather than in a tenant, the invoice
-data is fixtures, and the receipt signing key is still in-process. Nothing in the
-protocol, crypto, or policy path is simulated.
+IdP and the downstream API run on localhost rather than in a tenant, and the
+invoice data is fixtures. The receipt signing key defaults to in-process, but
+a real alternative now exists (ADR-0013, `signing_key_mode=vault-transit`) and
+isn't just declared — it's verified against a real Vault instance. Nothing in
+the protocol, crypto, or policy path is simulated.

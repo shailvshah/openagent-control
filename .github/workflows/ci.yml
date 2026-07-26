@@ -16,6 +16,7 @@ permissions:
 env:
   POETRY_VERSION: "2.3.2"
   OPA_VERSION: "v1.18.2"
+  VAULT_VERSION: "2.0.3"
 
 jobs:
   quality:
@@ -93,6 +94,18 @@ jobs:
       # project keeps finding. Fail loudly if the binary isn't there.
       - name: Verify OPA is available (integration tests must not skip)
         run: opa version
+
+      - name: Install Vault
+        run: |
+          curl -fsSL -o /tmp/vault.zip \
+            "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip"
+          unzip -o /tmp/vault.zip -d /usr/local/bin
+
+      # Same reasoning as the OPA check above: the Vault-backed signing-key
+      # tests (ADR-0013) skip themselves without the binary, which must not
+      # silently happen in CI.
+      - name: Verify Vault is available (integration tests must not skip)
+        run: vault version
 
       - name: Create the oac schema
         run: poetry run openagent-control migrate

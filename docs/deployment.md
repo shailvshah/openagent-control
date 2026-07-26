@@ -115,6 +115,24 @@ Every setting is an `OAC_`-prefixed environment variable — see
 | `OAC_REDIS_URL` | unset | Cache only, no schema |
 | `OAC_TOKEN_EXCHANGE_MODE` | `stub` | `rfc8693` (Okta/Keycloak) or `entra` |
 | `OAC_DECISION_MODE` | `enforce` | `observe` forwards a policy DENY instead of blocking it, and receipts it with `enforced=false` — see [ADR-0012](adr/0012-shadow-mode-for-first-deployment.md). For a first production rollout, before trusting a policy to actually block anything. |
+| `OAC_SIGNING_KEY_MODE` | `in-process` | `vault-transit` signs receipts via HashiCorp Vault (`OAC_VAULT_URL`, `OAC_VAULT_TOKEN`, `OAC_VAULT_TRANSIT_KEY_NAME`) — the private key never leaves Vault. See [ADR-0013](adr/0013-vault-transit-signing-key-custody.md); `in-process` is a dev-grade default, not compliance-grade custody. |
+
+### Vault-backed receipt signing
+
+```bash
+vault secrets enable transit
+vault write -f transit/keys/oac-receipt-signer type=ed25519   # Ed25519 only — AWS KMS/Azure Key Vault don't support it, see ADR-0013
+
+export OAC_SIGNING_KEY_MODE=vault-transit
+export OAC_VAULT_URL=http://your-vault:8200
+export OAC_VAULT_TOKEN=...            # a token scoped to sign/read on this one transit key
+export OAC_VAULT_TRANSIT_KEY_NAME=oac-receipt-signer
+openagent-control doctor              # reports a public-key fingerprint if reachable
+```
+
+An unreachable Vault or a missing transit key fails at startup, the same
+posture as the OIDC identity adapter — not a silent per-request signing
+failure.
 
 ## Verifying a release
 

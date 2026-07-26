@@ -37,10 +37,12 @@ program; credit in the advisory and release notes on request.
   implementation most integrators will start from.
 
 **Out of scope / known and tracked, not new reports:**
-- The audit ledger's signing key is generated in-process by default (no
-  KMS/HSM adapter yet) — see [roadmap.md](docs/roadmap.md). Receipts are
-  good-faith evidence, not compliance-grade, until that closes. Don't file this
-  as a new finding; it's the top item on the roadmap.
+- The audit ledger's signing key defaults to in-process key generation.
+  `OAC_SIGNING_KEY_MODE=vault-transit` (ADR-0013) keeps the key inside
+  HashiCorp Vault instead — but that itself pushes trust onto how Vault is
+  operated (HA, unsealing, backup), which is explicitly out of this project's
+  scope. Don't file "the default mode isn't KMS-backed" as a new finding; it's
+  documented, and the alternative is documented too.
 - `OAC_IDENTITY_MODE=header` trusts an `X-Spiffe-ID` header outright — it is
   documented as a dev-only stub (ADR-0005), safe only behind a boundary that
   has already authenticated the caller.

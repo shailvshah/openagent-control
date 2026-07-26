@@ -101,7 +101,42 @@ async def check_redis(settings: Settings) -> Check:
     return Check("redis", True, "ping ok")
 
 
-_CHECKS = (check_registry, check_opa, check_identity, check_database, check_redis)
+async def check_signing_key(settings: Settings) -> Check:
+    if settings.signing_key_mode != "vault-transit":
+        return Check(
+            "signing_key",
+            True,
+            "in-process (regenerated on restart, not compliance-grade — see ADR-0013)",
+        )
+
+    from openagent_control.adapters.ledger.vault_signer import VaultTransitSigner
+
+    def _connect() -> VaultTransitSigner:
+        return VaultTransitSigner(
+            vault_url=settings.vault_url,
+            token=settings.vault_token,
+            key_name=settings.vault_transit_key_name,
+        )
+
+    import asyncio
+
+    signer = await asyncio.to_thread(_connect)
+    fingerprint = signer.public_key().public_bytes_raw().hex()[:16]
+    return Check(
+        "signing_key",
+        True,
+        f"vault-transit key='{settings.vault_transit_key_name}' pubkey={fingerprint}…",
+    )
+
+
+_CHECKS = (
+    check_registry,
+    check_opa,
+    check_identity,
+    check_database,
+    check_redis,
+    check_signing_key,
+)
 
 
 async def run_all(settings: Settings) -> list[Check]:

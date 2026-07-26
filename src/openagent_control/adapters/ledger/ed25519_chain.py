@@ -1,8 +1,9 @@
 """In-memory Ed25519 hash-chained ledger adapter. See docs/adr/0003.
 
 Known v1 limitations (tracked in the ADR, not solved here — PostgresLedger in
-adapters/ledger/postgres.py addresses both per ADR-0009):
-- the signing key is generated in-process and lost on restart;
+adapters/ledger/postgres.py addresses the second; ADR-0013 addresses the first
+via a Vault-backed Signer):
+- the default signing key is generated in-process and lost on restart;
 - chain state (`_previous_hash`) lives in a single process's memory, so this does
   not scale to multiple replicas without a shared, race-safe store.
 """
@@ -13,9 +14,14 @@ import asyncio
 import hashlib
 import uuid
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from openagent_control.adapters.ledger.signing import GENESIS_HASH, ReceiptSigner, canonical_json
+from openagent_control.adapters.ledger.signing import (
+    GENESIS_HASH,
+    ReceiptSigner,
+    Signer,
+    canonical_json,
+)
 from openagent_control.domain.models import (
     AgentIdentity,
     ExecutionReceipt,
@@ -25,8 +31,8 @@ from openagent_control.domain.models import (
 
 
 class Ed25519ChainLedger:
-    def __init__(self, private_key: Ed25519PrivateKey | None = None) -> None:
-        self._signer = ReceiptSigner(private_key)
+    def __init__(self, signer: Signer | None = None) -> None:
+        self._signer = signer or ReceiptSigner()
         self._previous_hash = GENESIS_HASH
         self._lock = asyncio.Lock()
 

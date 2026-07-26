@@ -19,6 +19,7 @@ from openagent_control.adapters.identity.header import HeaderIdentityProvider
 from openagent_control.adapters.identity.jwt_svid import JwtSvidIdentityProvider
 from openagent_control.adapters.identity.oidc_jwks import OidcJwksIdentityProvider
 from openagent_control.adapters.ledger.ed25519_chain import Ed25519ChainLedger
+from openagent_control.adapters.ledger.signing import ReceiptSigner, Signer
 from openagent_control.adapters.mcp_upstream.http import HttpMCPUpstream
 from openagent_control.adapters.mcp_upstream.streamable_http import StreamableHttpMCPUpstream
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
@@ -150,26 +151,43 @@ def _require_persistence(feature: str) -> NoReturn:
     )
 
 
+def _signer(settings: Settings) -> Signer:
+    """Which key custody backs receipt signing — orthogonal to which ledger
+    backend stores the receipts (ADR-0013). Fetches the public key from Vault
+    at construction time, same startup-fail-fast posture as
+    OidcJwksIdentityProvider (ADR-0010): an unreachable Vault or a missing
+    transit key becomes a startup failure, not a per-request one."""
+    if settings.signing_key_mode == "vault-transit":
+        from openagent_control.adapters.ledger.vault_signer import VaultTransitSigner
+
+        return VaultTransitSigner(
+            vault_url=settings.vault_url,
+            token=settings.vault_token,
+            key_name=settings.vault_transit_key_name,
+        )
+    return ReceiptSigner()
+
+
 def build_container(settings: Settings) -> Container:
     # The Postgres/Redis stack is imported lazily inside these branches: eager
     # imports cost ~43MB RSS and ~150ms startup even when persistence is unused
     # (measured; see ADR-0009).
+    signer = _signer(settings)
     db_engine: AsyncEngine | None = None
     if settings.database_url:
         try:
             from openagent_control.adapters.db.session import make_engine, make_session_factory
             from openagent_control.adapters.ledger.postgres import PostgresLedger
-            from openagent_control.adapters.ledger.signing import ReceiptSigner
             from openagent_control.adapters.registry.postgres import PostgresAgentRegistry
         except ImportError:
             _require_persistence("OAC_DATABASE_URL")
         db_engine = make_engine(settings.database_url)
         session_factory = make_session_factory(db_engine)
         agent_registry: AgentRegistry = PostgresAgentRegistry(session_factory)
-        ledger: Ledger = PostgresLedger(session_factory, ReceiptSigner())
+        ledger: Ledger = PostgresLedger(session_factory, signer)
     else:
         agent_registry = FileAgentRegistry(resolve_registry_path(settings))
-        ledger = Ed25519ChainLedger()
+        ledger = Ed25519ChainLedger(signer)
 
     token_exchange = _token_exchange(settings)
 
