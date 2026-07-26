@@ -2,35 +2,34 @@
 
 v1 placeholder for the `AuditExporter` port; real deployments swap this for a
 Datadog/Grafana(-OTLP)/Splunk adapter behind the same port. The full receipt is
-serialized into the log message itself so it survives any logging formatter — an
-audit record carried only in `extra` would be dropped by the default formatter.
+serialized into the log message itself so it survives any log processor — an
+audit record carried only as structured `extra` context could be dropped by a
+formatter that doesn't know to render it.
+
+Uses loguru rather than stdlib `logging`, which is why this got simpler: the
+previous version had to detect and attach a `logging.StreamHandler` at
+construction time, because a host process (uvicorn, or an app this is
+embedded into per ADR-0001 Pattern C) commonly leaves the root logger
+handler-less at WARNING — which silently drops INFO-level receipts. loguru
+ships with a working default sink (stderr) from the moment it is imported, so
+that failure mode doesn't exist here: a receipt is never dropped just because
+nobody configured logging.
+
+A standalone deployment routes this — and everything else logged through
+loguru — to stdout at a chosen level/format by calling
+`openagent_control.logging_config.configure_logging()` once at process start
+(the CLI's `serve` command does). `export()` is correct either way.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-import sys
+
+from loguru import logger
 
 from openagent_control.domain.models import ExecutionReceipt
 
-logger = logging.getLogger("openagent_control.audit")
-
 
 class StdoutAuditExporter:
-    def __init__(self) -> None:
-        # This adapter's contract is "receipts reach stdout". Host processes
-        # (e.g. uvicorn) configure their own loggers and leave the root logger
-        # handler-less at WARNING, which would silently drop INFO receipts —
-        # so attach a handler explicitly unless one is already present.
-        if not logger.handlers:
-            handler = logging.StreamHandler(sys.stdout)
-            handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
-            # propagate stays True: root-level pipelines (pytest caplog, host log
-            # shippers) still see receipts; worst case is a duplicate line, never
-            # a dropped one.
-
     async def export(self, receipt: ExecutionReceipt) -> None:
-        logger.info("audit_receipt %s", json.dumps(receipt.model_dump(mode="json"), sort_keys=True))
+        logger.info("audit_receipt {}", json.dumps(receipt.model_dump(mode="json"), sort_keys=True))

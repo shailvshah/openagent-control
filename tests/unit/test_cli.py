@@ -122,7 +122,24 @@ def test_serve_invokes_uvicorn_with_the_requested_bind(monkeypatch: pytest.Monke
         captured.update({"app": app, **kwargs})
 
     monkeypatch.setattr("uvicorn.run", fake_run)
+    # configure_logging mutates loguru's global sinks — never let a test
+    # actually run it, or it leaks into every test that runs afterward in the
+    # same pytest process.
+    monkeypatch.setattr("openagent_control.cli.configure_logging", lambda *a, **k: None)
 
     assert cli.main(["serve", "--host", "127.0.0.1", "--port", "9999", "--workers", "3"]) == 0
     assert captured["app"] == "openagent_control.gateway.app:app"
     assert (captured["host"], captured["port"], captured["workers"]) == ("127.0.0.1", 9999, 3)
+
+
+def test_serve_configures_loguru_before_starting_uvicorn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+    configured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "openagent_control.cli.configure_logging",
+        lambda level, json_format: configured.update(level=level, json_format=json_format),
+    )
+
+    assert cli.main(["serve", "--log-level", "debug", "--log-format", "json"]) == 0
+
+    assert configured == {"level": "debug", "json_format": True}

@@ -25,6 +25,7 @@ from pathlib import Path
 
 from openagent_control.config import Settings
 from openagent_control.diagnostics import run_all
+from openagent_control.logging_config import configure_logging
 from openagent_control.resources import alembic_config, default_policy_dir, example_registry
 
 _OK = "  ok      "
@@ -113,12 +114,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
+    # This process owns its own logging from here on — see logging_config.py
+    # for why this call doesn't live inside create_app() or an adapter.
+    configure_logging(args.log_level, json_format=args.log_format == "json")
+
     uvicorn.run(
         "openagent_control.gateway.app:app",
         host=args.host,
         port=args.port,
         workers=args.workers,
-        log_level=args.log_level,
+        log_level=args.log_level.lower(),
     )
     return 0
 
@@ -147,6 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--workers", type=int, default=1)
     serve.add_argument("--log-level", default="info")
+    serve.add_argument(
+        "--log-format",
+        choices=["console", "json"],
+        default="console",
+        help="json emits one structured line per log entry, for a log-aggregation pipeline",
+    )
     serve.set_defaults(func=cmd_serve)
 
     return parser
