@@ -30,7 +30,8 @@ publishes to PyPI via Trusted Publishing on a tag. See
   separate from the enforcing gateway: registry CRUD, receipt search/verify,
   fleet health. Same self-hosted posture as the gateway (ADR discussion,
   2026-07-25) — the vendor never holds the token-exchange secret or sits in
-  the customer's data path. Not started; tracked below.
+  the customer's data path. **The API is done (ADR-0014); the dashboard SPA
+  is not started yet.** Tracked below.
 
 ## Scope decisions from the integrations discussion (2026-07-25)
 
@@ -107,17 +108,36 @@ In dependency order — each unblocks the phase next to it:
    AWS KMS and Azure Key Vault were considered and ruled out: neither supports
    Ed25519 asymmetric signing, so either would force reopening ADR-0003's
    algorithm choice rather than just relocating the key.
-7. **Control-plane API + dashboard** (scoped 2026-07-26, not started): a
-   separate, self-hosted service — registry CRUD, receipt search/verify, fleet
-   health — backed by the same Postgres. Deliberately not merged into the
-   enforcing gateway; it has different auth requirements (an operator identity,
-   not a workload identity) and a compromise there must not be a path to
-   forging receipts or bypassing policy. Subsumes the "admin/kill-switch API"
-   item from the previous assessment: registry status is a database row now
-   (was a git file), so an operator surface that flips it is additive, not an
-   architecture change. Until it exists, suspending an agent means editing
-   `oac.agents` directly, with revocation visible to the gateway within one
-   cache TTL (default 30s).
+7. **Control-plane API** — **done** for the JSON API (ADR-0014); the
+   dashboard SPA is the remaining piece. `openagent-control serve-control-plane`
+   runs a separate, self-hosted service — registry CRUD, receipt search/verify,
+   fleet health — backed by the same Postgres, sharing nothing else with the
+   enforcing gateway (it never imports `GovernedExecutionService`, the policy
+   engine, or the MCP upstream client). Operator identity, not workload
+   identity: `OAC_CONTROL_PLANE_OPERATOR_AUTH_MODE=api-key` (a static token) or
+   `oidc-jwks` (a real operator's OIDC access token checked against a
+   role/group claim, covering Okta/Entra/Keycloak's differing claim shapes).
+   Holds only the receipt-signing *public* key, never anything capable of
+   `.sign()`, and never writes `oac.execution_receipts` — a compromise there
+   has no path to forging receipts or bypassing policy. Every mutating call
+   writes an `oac.operator_actions` audit row in the same transaction.
+   Subsumes the "admin/kill-switch API" item from the previous assessment:
+   registry status is a database row now (was a git file), so an operator
+   surface that flips it was additive, not an architecture change. Verified
+   against a **fully real stack**
+   (`tests/integration/test_control_plane_e2e.py`): create an agent via the
+   control-plane API, confirm a real gateway (real OPA, real Postgres) now
+   allows it, suspend it via the same API, confirm the real gateway now denies
+   it — closing the exact gap ADR-0009 flagged as out of scope. One caveat
+   found during that verification: `verify_chain()` only produces meaningful
+   cross-process signature checks when both services run
+   `signing_key_mode=vault-transit`; the default `in-process` mode gives the
+   gateway and the control plane independent random keys, so the control plane
+   can search/list receipts either way but can't verify signatures the
+   gateway's process produced without a shared key. Not yet built: the
+   dashboard SPA itself (a Vite/React app served as static assets from the
+   same service) and its browser-appropriate OIDC login (session cookie, on
+   top of the same operator-identity port).
 
 ## Honest framing
 

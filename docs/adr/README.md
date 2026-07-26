@@ -15,3 +15,4 @@
 | [0011](0011-mcp-streamable-http-via-the-official-sdk.md) | Speak MCP via the official SDK, not hand-rolled JSON-RPC |
 | [0012](0012-shadow-mode-for-first-deployment.md) | Shadow (observe) mode as a decision, not a bypass |
 | [0013](0013-vault-transit-signing-key-custody.md) | KMS-backed receipt signing via HashiCorp Vault Transit |
+| [0014](0014-control-plane-api-and-dashboard.md) | Control-plane API + dashboard, separate from the enforcing gateway |

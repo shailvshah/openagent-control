@@ -133,6 +133,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve_control_plane(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    configure_logging(args.log_level, json_format=args.log_format == "json")
+
+    # factory=True: uvicorn calls create_app() itself at server startup rather
+    # than this module needing a module-level `app = create_app()`, which
+    # would make merely importing control_plane.app fail without
+    # OAC_DATABASE_URL set — see the docstring on create_app() for why.
+    uvicorn.run(
+        "openagent_control.control_plane.app:create_app",
+        factory=True,
+        host=args.host,
+        port=args.port,
+        workers=args.workers,
+        log_level=args.log_level.lower(),
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="openagent-control",
@@ -164,6 +184,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="json emits one structured line per log entry, for a log-aggregation pipeline",
     )
     serve.set_defaults(func=cmd_serve)
+
+    serve_control_plane = sub.add_parser(
+        "serve-control-plane", help="run the control-plane API + dashboard (ADR-0014)"
+    )
+    serve_control_plane.add_argument("--host", default="0.0.0.0")  # noqa: S104
+    serve_control_plane.add_argument("--port", type=int, default=8001)
+    serve_control_plane.add_argument("--workers", type=int, default=1)
+    serve_control_plane.add_argument("--log-level", default="info")
+    serve_control_plane.add_argument(
+        "--log-format",
+        choices=["console", "json"],
+        default="console",
+    )
+    serve_control_plane.set_defaults(func=cmd_serve_control_plane)
 
     return parser
 

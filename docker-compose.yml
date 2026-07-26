@@ -71,6 +71,28 @@ services:
     ports:
       - "6379:6379"
 
+  # Separate process from the gateway (ADR-0014): shares the same Postgres,
+  # never imports GovernedExecutionService/PolicyEngine/MCPUpstream. Requires
+  # Postgres unconditionally, so it lives under the same profile.
+  control-plane:
+    build: .
+    image: openagent-control:local
+    profiles: ["persistence"]
+    entrypoint: ["openagent-control", "serve-control-plane", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    environment:
+      - OAC_DATABASE_URL=${OAC_DATABASE_URL:-postgresql+asyncpg://oac:oac@postgres:5432/oac}
+      - OAC_CONTROL_PLANE_OPERATOR_AUTH_MODE=${OAC_CONTROL_PLANE_OPERATOR_AUTH_MODE:-api-key}
+      - OAC_CONTROL_PLANE_API_KEY=${OAC_CONTROL_PLANE_API_KEY:-}
+      - OAC_CONTROL_PLANE_OIDC_DISCOVERY_URL=${OAC_CONTROL_PLANE_OIDC_DISCOVERY_URL:-}
+      - OAC_CONTROL_PLANE_OIDC_AUDIENCE=${OAC_CONTROL_PLANE_OIDC_AUDIENCE:-}
+      - OAC_SIGNING_KEY_MODE=${OAC_SIGNING_KEY_MODE:-in-process}
+      - OAC_VAULT_URL=${OAC_VAULT_URL:-}
+      - OAC_VAULT_TOKEN=${OAC_VAULT_TOKEN:-}
+    depends_on:
+      - postgres
+
   # --- demo only: not part of a deployment ---------------------------------
   enterprise-backend:
     build: .

@@ -29,3 +29,7 @@ class TokenExchangeError(GovernanceError):
 
 class UpstreamError(GovernanceError):
     """The downstream MCP server rejected or failed the forwarded call."""
+
+
+class AgentNotFoundError(GovernanceError):
+    """AgentDirectory.update/set_status was asked to mutate an unknown agent."""

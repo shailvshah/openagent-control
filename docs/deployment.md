@@ -25,6 +25,7 @@ That puts `openagent-control` on your PATH:
 | `openagent-control migrate` | Creates/upgrades the `oac` schema (requires `OAC_DATABASE_URL`) |
 | `openagent-control doctor` | Checks every dependency and exits non-zero if the gateway would not serve |
 | `openagent-control serve` | Runs the gateway |
+| `openagent-control serve-control-plane` | Runs the control-plane API + dashboard (ADR-0014) — a separate process, requires `OAC_DATABASE_URL` |
 
 ### Minimal run
 
@@ -119,6 +120,26 @@ Every setting is an `OAC_`-prefixed environment variable — see
 | `OAC_OTEL_ENABLED` | `false` | Emits spans through the governed-execution path (identify, registry lookup, policy evaluate, credential broker, forward) via OTLP/HTTP. Off by default: instrumentation always runs (a no-op tracer costs nothing), only exporting is opt-in. |
 | `OAC_OTEL_EXPORTER_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP/HTTP traces endpoint — any collector or vendor OTLP ingest, not tied to a specific backend. |
 | `OAC_OTEL_SERVICE_NAME` | `openagent-control` | `service.name` resource attribute on exported spans. |
+| `OAC_CONTROL_PLANE_OPERATOR_AUTH_MODE` | `api-key` | `api-key` (a static `OAC_CONTROL_PLANE_API_KEY`) or `oidc-jwks` (a real operator's OIDC access token, checked against a role/group claim). See [ADR-0014](adr/0014-control-plane-api-and-dashboard.md). |
+| `OAC_CONTROL_PLANE_API_KEY` | unset | Required when `operator_auth_mode=api-key`. |
+| `OAC_CONTROL_PLANE_OIDC_ROLE_CLAIM` | `roles` | Which claim carries roles/groups: Entra `roles`, Okta a custom claim you configure, Keycloak `realm_access.roles` (dotted path into a nested object). |
+| `OAC_CONTROL_PLANE_OIDC_REQUIRED_ROLE` | `oac-operator` | The role/group value the claim above must contain. |
+
+### Control-plane API + dashboard
+
+```bash
+export OAC_DATABASE_URL=postgresql+asyncpg://user:pass@host/oac   # required — no zero-dependency mode
+export OAC_CONTROL_PLANE_API_KEY=$(openssl rand -hex 32)
+openagent-control serve-control-plane --port 8001
+```
+
+A separate process from the gateway (ADR-0014): registry CRUD, receipt
+search/verify, and fleet health, sharing the same Postgres. It never imports
+`GovernedExecutionService`, the policy engine, or the MCP upstream client — a
+compromise here has no path to those. It also never holds anything capable of
+signing a receipt, only the public key, and never writes
+`oac.execution_receipts` — see the ADR for the full security-boundary
+reasoning.
 
 ### Vault-backed receipt signing
 
@@ -136,6 +157,16 @@ openagent-control doctor              # reports a public-key fingerprint if reac
 An unreachable Vault or a missing transit key fails at startup, the same
 posture as the OIDC identity adapter — not a silent per-request signing
 failure.
+
+**Required if you run the control plane** (`serve-control-plane`, ADR-0014):
+its receipt-search and verify-chain endpoints only produce meaningful
+signature verification when the gateway and the control plane share a
+signing key. With the default `OAC_SIGNING_KEY_MODE=in-process`, each process
+generates its own independent random key at startup — the control plane can
+list and search receipts either way, but has no way to verify a signature the
+gateway's process produced. Set `OAC_SIGNING_KEY_MODE=vault-transit` on both
+services, pointing at the same Vault transit key, to make verification
+cross-process-meaningful.
 
 ### Tracing
 

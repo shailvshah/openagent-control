@@ -98,3 +98,35 @@ class ExecutionReceipt(BaseModel):
     denials (orphaned/suspended agents, ADR-0008) and fail-closed denials
     (policy engine unreachable) are never softened by shadow mode and are
     always enforced=True; see ADR-0012."""
+
+
+class AgentPatch(BaseModel):
+    """Partial update to a RegisteredAgent's mutable facts, per ADR-0014.
+
+    `spiffe_id` is the primary key and never patchable; `status` changes go
+    through AgentDirectory.set_status, not this, so status_changed_at is
+    always updated deliberately rather than as a side effect of an edit."""
+
+    display_name: str | None = None
+    purpose: str | None = None
+    owner: str | None = None
+    risk_tier: RiskTier | None = None
+    granted_tools: list[str] | None = None
+
+
+class ChainVerificationResult(BaseModel):
+    """Result of walking the full receipt chain and checking every hash link
+    and signature, per ADR-0014. O(n) over the receipt table — see
+    ReceiptQuery.verify_chain."""
+
+    valid: bool
+    receipts_checked: int
+    first_broken_sequence_id: str | None = None
+
+
+class FleetSummary(BaseModel):
+    """A dashboard landing-page summary, per ADR-0014."""
+
+    agents_by_status: dict[str, int]
+    receipts_last_24h_by_decision: dict[str, int]
+    last_receipt_timestamp: datetime | None = None

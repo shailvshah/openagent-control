@@ -31,6 +31,11 @@ program; credit in the advisory and release notes on request.
 **In scope:**
 - The gateway's identity, policy-evaluation, credential-brokering, and
   audit-receipt paths (`src/openagent_control/`).
+- The control plane's operator-identity, registry-CRUD, and receipt-search/
+  verify paths (`src/openagent_control/control_plane/`, ADR-0014) — in
+  particular, any path that would let it write `oac.execution_receipts` or
+  produce a valid receipt signature. By design it should hold neither
+  capability; a report showing otherwise is a critical finding.
 - The packaging and release pipeline (a compromised release is a compromise of
   everyone who `pip install`s it).
 - The example/demo stack (`examples/`), because it is the reference
@@ -42,10 +47,16 @@ program; credit in the advisory and release notes on request.
   HashiCorp Vault instead — but that itself pushes trust onto how Vault is
   operated (HA, unsealing, backup), which is explicitly out of this project's
   scope. Don't file "the default mode isn't KMS-backed" as a new finding; it's
-  documented, and the alternative is documented too.
+  documented, and the alternative is documented too. This also means the
+  control plane's `verify_chain()` can't meaningfully verify signatures the
+  gateway produced unless both share a Vault-backed key — see ADR-0014.
 - `OAC_IDENTITY_MODE=header` trusts an `X-Spiffe-ID` header outright — it is
   documented as a dev-only stub (ADR-0005), safe only behind a boundary that
   has already authenticated the caller.
+- `OAC_CONTROL_PLANE_OPERATOR_AUTH_MODE=api-key` is a static shared-secret
+  bearer token, documented as the low-ceremony default (ADR-0014) — same
+  posture as `identity_mode=header`. Use `oidc-jwks` for real operator access
+  control.
 - The `examples/enterprise_scenario/` authorization server ships a hardcoded
   client secret (`scenario-only-not-a-real-secret`) by design, for a
   fully-offline demo. It is gated behind the `demo` Docker Compose profile,

@@ -182,3 +182,24 @@ def test_serve_configures_tracing_when_otel_is_enabled(monkeypatch: pytest.Monke
         "endpoint": "http://collector:4318/v1/traces",
         "service_name": "oac-test",
     }
+
+
+def test_serve_control_plane_invokes_uvicorn_with_factory_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(app: str, **kwargs: Any) -> None:
+        captured.update({"app": app, **kwargs})
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+    monkeypatch.setattr("openagent_control.cli.configure_logging", lambda *a, **k: None)
+
+    assert (
+        cli.main(["serve-control-plane", "--host", "127.0.0.1", "--port", "9001", "--workers", "2"])
+        == 0
+    )
+
+    assert captured["app"] == "openagent_control.control_plane.app:create_app"
+    assert captured["factory"] is True
+    assert (captured["host"], captured["port"], captured["workers"]) == ("127.0.0.1", 9001, 2)

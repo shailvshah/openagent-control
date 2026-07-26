@@ -95,3 +95,22 @@ class Settings(BaseSettings):
     """OTLP/HTTP endpoint. Any local collector or vendor OTLP ingest works;
     this project is not tied to a specific backend."""
     otel_service_name: str = "openagent-control"
+
+    control_plane_operator_auth_mode: Literal["api-key", "oidc-jwks"] = "api-key"
+    """"api-key" validates a static bearer token (control_plane_api_key) — the
+    low-ceremony default for direct API/script/CI use, same posture as
+    identity_mode="header". "oidc-jwks" validates a real operator's OIDC
+    access token against a required role/group claim. See ADR-0014."""
+    control_plane_api_key: str = ""
+    """Required when control_plane_operator_auth_mode="api-key"."""
+    control_plane_oidc_discovery_url: str = ""
+    control_plane_oidc_audience: str = ""
+    control_plane_oidc_issuer: str = ""
+    control_plane_oidc_role_claim: str = "roles"
+    """Which claim carries the operator's roles/groups. Okta: a custom claim
+    you configure (commonly "groups") — not present by default. Entra ID:
+    "roles" (app roles; prefer this over "groups", which is subject to claim
+    overage for users in many groups). Keycloak: "realm_access.roles" (a
+    dotted path into a nested object) for realm roles."""
+    control_plane_oidc_required_role: str = "oac-operator"
+    """The role/group value control_plane_oidc_role_claim must contain."""

@@ -69,3 +69,20 @@ class ChainStateRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     previous_hash: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class OperatorActionRow(Base):
+    """Audit trail of the control plane's own mutating actions (ADR-0014):
+    every agent create/update/status-change writes one row here in the same
+    transaction as its `agents` write. An admin surface with no record of its
+    own actions would be a real gap in a project whose whole pitch is
+    auditability."""
+
+    __tablename__ = "operator_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    operator_subject: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    target_spiffe_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    detail: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
