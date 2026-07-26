@@ -81,19 +81,30 @@ make install      # poetry install --all-extras
 make quality      # black --check, ruff, mypy
 make test         # pytest with coverage (95% gate)
 make check        # quality + test
-make up           # docker compose: gateway + OPA + mock MCP server
+make up           # docker compose: gateway + OPA + governed MCP server + authorization server
 ```
 
-Requires Python 3.11+ and [Poetry](https://python-poetry.org/).
+Requires Python 3.11+ and [Poetry](https://python-poetry.org/). The integration
+tests additionally need the `opa` binary (`brew install opa`); without it they
+skip rather than substitute a fake policy engine.
 
-Once running (`make up`), send a tool call through the gateway:
+Once running (`make up`), obtain an access token the way a real workload does —
+an OAuth 2.0 client-credentials grant — then send a governed tool call:
 
 ```bash
+TOKEN=$(curl -s -X POST http://localhost:8090/oauth2/v1/token \
+  -u finance-invoice-svc:scenario-only-not-a-real-secret \
+  -d grant_type=client_credentials | jq -r .access_token)
+
 curl -X POST http://localhost:8000/mcp/v1 \
   -H "Content-Type: application/json" \
-  -H "X-Spiffe-ID: spiffe://corp.net/ns/finance/agent/invoice-bot" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_query","arguments":{}}}'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_query","arguments":{"quarter":"Q3"}}}'
 ```
+
+The upstream MCP server validates the short-lived credential the gateway brokers
+for it, so the same request sent directly to `localhost:8080` is refused. See
+[examples/enterprise_scenario/](examples/enterprise_scenario/README.md).
 
 ## Persistence & caching (optional)
 
@@ -115,6 +126,27 @@ To point at your own Postgres instance instead: `export OAC_DATABASE_URL=postgre
 then `make db-upgrade`.
 
 ## Examples
+
+- **[examples/enterprise_scenario/](examples/enterprise_scenario/README.md) — the
+  full stack with nothing stubbed.** A LangGraph agent, real OIDC/JWKS identity,
+  real OPA, real RFC 8693 credential brokering, and a real MCP server over real
+  SQLite that validates the brokered credential's signature, audience, and scope.
+  It also demonstrates the property that distinguishes a control plane from a
+  logging proxy: an agent that **bypasses the gateway is refused by the upstream**,
+  because the token it holds is scoped to the gateway, not to the API. The same
+  assertions run in CI (`tests/integration/`), so the demo cannot rot.
+
+  ```bash
+  brew install opa && poetry install --with examples
+  poetry run python -m examples.enterprise_scenario.scenario
+  ```
+
+  Its [`keycloak/`](examples/enterprise_scenario/keycloak/README.md) suite runs
+  the same identity and RFC 8693 adapters against **real Keycloak 26.4** — an
+  IdP this repo didn't write, so it can't share our bugs. That check earned its
+  keep on the first run: it caught the identity adapter misreading Keycloak's
+  service-account `sub` as a human sponsor, which would have 401'd every
+  autonomous agent.
 
 - [examples/langgraph_governed_agent/](examples/langgraph_governed_agent/README.md) —
   a deterministic, zero-API-key demo of a LangGraph agent whose tool calls are

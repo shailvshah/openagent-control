@@ -25,6 +25,11 @@ COPY registry ./registry
 COPY policies ./policies
 COPY migrations ./migrations
 COPY alembic.ini ./
+# The compose stack runs examples/enterprise_scenario/serve.py as the governed
+# downstream system (real MCP server + authorization server). Needs no extra
+# dependencies — only stdlib, pyjwt, and cryptography, all already installed.
+COPY examples ./examples
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 CMD ["uvicorn", "openagent_control.gateway.app:app", "--host", "0.0.0.0", "--port", "8000"]

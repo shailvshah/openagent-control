@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -57,11 +58,37 @@ async def test_lookup_unknown_agent_returns_none(registry: FileAgentRegistry) ->
 
 
 @pytest.mark.asyncio
-async def test_second_lookup_reuses_cached_parse(registry: FileAgentRegistry) -> None:
-    first = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
-    second = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
+async def test_second_lookup_reuses_cached_parse(
+    registry: FileAgentRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
 
-    assert first == second
+    def _fail(*args: object, **kwargs: object) -> str:
+        raise AssertionError("re-read the registry file despite an unchanged mtime")
+
+    monkeypatch.setattr(Path, "read_text", _fail)
+
+    agent = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
+    assert agent is not None
+
+
+@pytest.mark.asyncio
+async def test_suspension_takes_effect_without_a_restart(tmp_path: Path) -> None:
+    """Revocation must not require a redeploy — see ADR-0008."""
+    path = tmp_path / "agents.yaml"
+    path.write_text(_YAML)
+    registry = FileAgentRegistry(path)
+
+    before = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
+    assert before is not None and before.status is AgentStatus.ACTIVE
+
+    path.write_text(_YAML.replace("status: active", "status: suspended"))
+    # Force a distinct mtime: filesystem timestamp granularity can otherwise
+    # make an immediate rewrite indistinguishable from the original.
+    os.utime(path, (0, 0))
+
+    after = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
+    assert after is not None and after.status is AgentStatus.SUSPENDED
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,11 @@ signed, hash-chained audit receipt.
 The demo is fully deterministic — a scripted chat model drives the agent, so it runs
 offline with **zero API keys**.
 
+> This example focuses on the *agent-side integration surface*: what an application
+> team writes to route tool calls through the gateway. For the full stack with real
+> identity, real credential brokering, and a real upstream that validates the
+> brokered credential, see [examples/enterprise_scenario/](../enterprise_scenario/README.md).
+
 ## What it shows
 
 1. `read_query` → **ALLOWED** by `policies/mcp_authz.rego` for
@@ -22,12 +27,16 @@ offline with **zero API keys**.
 
 ```bash
 poetry install --with examples
-make up                        # gateway :8000, OPA :8181, mock MCP upstream
+make up                        # gateway :8000, OPA :8181, governed MCP server :8080
 poetry run python -m examples.langgraph_governed_agent.demo
 docker compose logs gateway | grep audit_receipt   # the signed evidence
 ```
 
-`OAC_GATEWAY_URL` overrides the gateway address if it isn't on `localhost:8000`.
+The demo first obtains its own access token via an OAuth 2.0 client-credentials
+grant (`fetch_agent_token`), because `make up` runs the gateway with real OIDC
+identity. `OAC_GATEWAY_URL` and `OAC_TOKEN_URL` override those addresses; set
+`OAC_USE_HEADER_IDENTITY=1` to use the `X-Spiffe-ID` dev stub instead, which
+requires running the gateway with `OAC_IDENTITY_MODE=header`.
 
 The demo agent talks to the gateway over plain HTTP, so it does not know or care
 whether the gateway is backed by the in-process ledger/file registry or by Postgres

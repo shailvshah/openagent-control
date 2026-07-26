@@ -10,7 +10,9 @@ __pycache__
 .coverage
 docs
 tests
-examples
 scratch
+# examples/ is NOT excluded: the compose stack's enterprise-backend service runs
+# examples/enterprise_scenario/serve.py as the governed downstream system.
+examples/**/__pycache__
 *.md
 !README.md

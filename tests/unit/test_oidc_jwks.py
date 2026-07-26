@@ -137,6 +137,50 @@ async def test_delegated_token_surfaces_sub_as_human_sponsor(
 
 
 @pytest.mark.asyncio
+async def test_keycloak_service_account_is_not_treated_as_a_human_sponsor(
+    idp_server: tuple[_IdpFixture, rsa.RSAPrivateKey],
+) -> None:
+    """Keycloak client-credentials tokens carry a service-account UUID in `sub`.
+
+    Mistaking it for a human makes the gateway demand a subject token for an
+    autonomous call — caught against a real Keycloak realm, see
+    tests/integration/test_keycloak_conformance.py.
+    """
+    idp, key = idp_server
+    provider = OidcJwksIdentityProvider(idp.discovery_url, audience=idp.audience)
+    token = _token(
+        key,
+        idp,
+        {
+            "azp": "finance-invoice-svc",
+            "sub": "1de70397-df2a-4b59-9679-fd51438bf04e",
+            "preferred_username": "service-account-finance-invoice-svc",
+        },
+    )
+
+    agent = await provider.identify({"Authorization": f"Bearer {token}"})
+
+    assert agent.spiffe_id == f"oidc://{idp.issuer}/finance-invoice-svc"
+    assert agent.human_sponsor is None
+
+
+@pytest.mark.asyncio
+async def test_entra_app_only_token_is_not_treated_as_a_human_sponsor(
+    idp_server: tuple[_IdpFixture, rsa.RSAPrivateKey],
+) -> None:
+    """Entra ID marks app-only (client-credentials) tokens with idtyp=app."""
+    idp, key = idp_server
+    provider = OidcJwksIdentityProvider(idp.discovery_url, audience=idp.audience)
+    token = _token(
+        key, idp, {"appid": "entra-app-id", "sub": "service-principal-oid", "idtyp": "app"}
+    )
+
+    agent = await provider.identify({"Authorization": f"Bearer {token}"})
+
+    assert agent.human_sponsor is None
+
+
+@pytest.mark.asyncio
 async def test_missing_client_id_claims_is_rejected(
     idp_server: tuple[_IdpFixture, rsa.RSAPrivateKey],
 ) -> None:

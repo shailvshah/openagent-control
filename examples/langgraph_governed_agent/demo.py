@@ -16,16 +16,27 @@ import os
 
 from langchain.agents import create_agent
 
-from examples.langgraph_governed_agent.governed_tools import DEFAULT_GATEWAY_URL, demo_tools
+from examples.langgraph_governed_agent.governed_tools import (
+    DEFAULT_GATEWAY_URL,
+    DEFAULT_TOKEN_URL,
+    demo_tools,
+    fetch_agent_token,
+)
 from examples.langgraph_governed_agent.scripted_model import scripted_finance_model
 
 
 def main() -> None:
     gateway_url = os.environ.get("OAC_GATEWAY_URL", DEFAULT_GATEWAY_URL)
+    token_url = os.environ.get("OAC_TOKEN_URL", DEFAULT_TOKEN_URL)
+
+    # `make up` runs the gateway with real OIDC identity, so the agent fetches
+    # its own access token first, exactly as a service principal would. Set
+    # OAC_IDENTITY_MODE=header on the gateway to use the dev header stub instead.
+    agent_token = None if os.environ.get("OAC_USE_HEADER_IDENTITY") else fetch_agent_token(token_url)
 
     agent = create_agent(
         model=scripted_finance_model(),
-        tools=demo_tools(gateway_url),
+        tools=demo_tools(gateway_url, agent_token),
         system_prompt="You are invoice-bot, a governed finance agent.",
     )
 

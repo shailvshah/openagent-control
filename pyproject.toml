@@ -76,7 +76,9 @@ files = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." so the integration tests can import examples/ — the enterprise scenario's
+# authorization server and MCP server are the real components under test there.
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 addopts = "--cov=openagent_control --cov-report=term-missing --cov-fail-under=95"
 

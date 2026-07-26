@@ -139,15 +139,32 @@ class GovernedExecutionService:
             )
 
     async def _broker_credential(self, agent: AgentIdentity, headers: dict[str, str]) -> str:
-        if not agent.human_sponsor:
+        """Obtains the short-lived, audience-scoped credential for the upstream.
+
+        Delegated calls exchange the human sponsor's subject token. Autonomous
+        calls exchange the agent's own access token — RFC 8693 permits either,
+        and a real resource server validates the result's audience and scope, so
+        the agent must never be handed a credential it could reuse elsewhere.
+
+        The placeholder below is reachable only when no bearer token exists at
+        all, which means identity_mode="header" — the dev stub of ADR-0005,
+        where there is no real credential to broker in the first place.
+        """
+        normalized = {k.lower(): v for k, v in headers.items()}
+
+        if agent.human_sponsor:
+            subject_token = normalized.get(_SUBJECT_TOKEN_HEADER)
+            if not subject_token:
+                raise MissingSubjectTokenError(
+                    f"delegated call for sponsor '{agent.human_sponsor}' "
+                    f"requires a '{_SUBJECT_TOKEN_HEADER}' header"
+                )
+            return await self._token_exchange.exchange(subject_token, self._delegated_audience)
+
+        scheme, _, agent_token = normalized.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not agent_token:
             return f"autonomous::{agent.spiffe_id}"
-        subject_token = {k.lower(): v for k, v in headers.items()}.get(_SUBJECT_TOKEN_HEADER)
-        if not subject_token:
-            raise MissingSubjectTokenError(
-                f"delegated call for sponsor '{agent.human_sponsor}' "
-                f"requires a '{_SUBJECT_TOKEN_HEADER}' header"
-            )
-        return await self._token_exchange.exchange(subject_token, self._delegated_audience)
+        return await self._token_exchange.exchange(agent_token, self._delegated_audience)
 
 
 def _jsonrpc_error(

@@ -119,7 +119,9 @@ def _service(
 
 
 @pytest.mark.asyncio
-async def test_allowed_autonomous_call_uses_workload_credential() -> None:
+async def test_autonomous_call_without_a_bearer_token_falls_back_to_a_placeholder() -> None:
+    """Only reachable in identity_mode="header" (ADR-0005), where the caller
+    presents no token there would be anything to exchange."""
     service, upstream, exporter = _service(
         FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW))
     )
@@ -129,6 +131,29 @@ async def test_allowed_autonomous_call_uses_workload_credential() -> None:
     assert result["result"] == "ok"
     assert upstream.credentials == [f"autonomous::{_AGENT}"]
     assert exporter.receipts[0].decision is Decision.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_autonomous_call_exchanges_the_agents_own_token() -> None:
+    """A real upstream validates the credential's audience, so an autonomous
+    agent must be given a brokered token, never a placeholder string."""
+    service, upstream, _ = _service(FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)))
+
+    headers = {"x-spiffe-id": _AGENT, "authorization": "Bearer agent-own-token"}
+    result = await service.execute(headers, _PAYLOAD)
+
+    assert result["result"] == "ok"
+    assert upstream.credentials == ["obo::agent-own-token::test-audience"]
+
+
+@pytest.mark.asyncio
+async def test_autonomous_call_ignores_a_non_bearer_authorization_scheme() -> None:
+    service, upstream, _ = _service(FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW)))
+
+    headers = {"x-spiffe-id": _AGENT, "authorization": "Basic dXNlcjpwYXNz"}
+    await service.execute(headers, _PAYLOAD)
+
+    assert upstream.credentials == [f"autonomous::{_AGENT}"]
 
 
 @pytest.mark.asyncio

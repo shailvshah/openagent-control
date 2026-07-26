@@ -15,6 +15,19 @@ agents:
       - read_query
       - update_record
 
+  # The agent used by the docker-compose stack, which runs with real OIDC
+  # identity (OAC_IDENTITY_MODE=oidc-jwks) — the identity is therefore derived
+  # from the token's issuer and client-id claim, not an X-Spiffe-ID header.
+  # See examples/enterprise_scenario/.
+  - spiffe_id: oidc://http://enterprise-backend:8090/finance-invoice-svc
+    display_name: Finance Invoice Service
+    purpose: Read and reconcile finance invoices via the governed MCP server.
+    owner: alice@corp.net
+    risk_tier: medium
+    status: active
+    granted_tools:
+      - read_query
+
   - spiffe_id: spiffe://corp.net/ns/sales/agent/lead-qualifier
     display_name: Lead Qualifier
     purpose: Enrich and qualify inbound sales leads in Salesforce.

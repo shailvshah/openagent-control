@@ -5,9 +5,12 @@ Validates an access token actually issued by an OIDC-compliant IdP: fetches
 the discovery document once at startup, verifies signature/issuer/audience via
 a cached, rotation-aware JWKS client, and derives the calling workload's
 identity from the client/app-id claim (azp/appid/cid) rather than `sub` —
-machine (client-credentials) tokens from both providers identify the calling
-application that way; `sub`, when present and distinct, is a delegated human
-user and surfaces as `human_sponsor` instead.
+machine (client-credentials) tokens identify the calling application that way.
+
+A `sub` claim is treated as a delegated human sponsor only when the token is
+not an app-only token; see `_has_human_sponsor`, which encodes each provider's
+documented marker. Verified against a real Keycloak realm — see
+tests/integration/test_keycloak_conformance.py.
 """
 
 from __future__ import annotations
@@ -26,6 +29,30 @@ _ALGORITHMS = ["RS256"]
 # Claims that identify the calling application/service principal, checked in
 # order — see ADR-0010 on why this isn't simply `sub`.
 _CLIENT_ID_CLAIMS = ("azp", "appid", "cid")
+
+# Keycloak issues client-credentials tokens with `sub` set to the service
+# account's UUID — distinct from the client id — so "sub differs from the
+# client" is not on its own evidence of a human. Each provider marks app-only
+# tokens differently; these are the documented markers:
+_KEYCLOAK_SERVICE_ACCOUNT_PREFIX = "service-account-"
+_ENTRA_APP_ONLY_IDTYP = "app"
+
+
+def _has_human_sponsor(claims: dict[str, object], client_id: str) -> bool:
+    """True only when the token really represents a user acting through the agent.
+
+    Getting this wrong is not cosmetic: a false positive makes the gateway treat
+    an autonomous machine call as delegated and reject it for a missing subject
+    token, which is exactly what happened against a real Keycloak realm before
+    this check existed.
+    """
+    subject = claims.get("sub")
+    if not subject or subject == client_id:  # Okta client-credentials
+        return False
+    if claims.get("idtyp") == _ENTRA_APP_ONLY_IDTYP:  # Entra app-only token
+        return False
+    username = claims.get("preferred_username")  # Keycloak service account
+    return not (isinstance(username, str) and username.startswith(_KEYCLOAK_SERVICE_ACCOUNT_PREFIX))
 
 
 class OidcJwksIdentityProvider:
@@ -71,8 +98,7 @@ class OidcJwksIdentityProvider:
                 f"token has none of the expected client-id claims {_CLIENT_ID_CLAIMS}"
             )
 
-        subject = claims.get("sub")
-        human_sponsor = str(subject) if subject and subject != client_id else None
+        human_sponsor = str(claims["sub"]) if _has_human_sponsor(claims, client_id) else None
 
         return AgentIdentity(
             spiffe_id=f"oidc://{self._issuer}/{client_id}",

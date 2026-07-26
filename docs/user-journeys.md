@@ -20,15 +20,16 @@ straight at the target system, without rewriting the agent.
 1. Read the [LangGraph example](../examples/langgraph_governed_agent/README.md)
    to see the shape of the integration — the agent's tool-calling node sends a
    normal JSON-RPC `tools/call` to `POST /mcp/v1` instead of invoking the tool
-   directly. No SDK to install; it's an HTTP call with an identity header/token.
-2. Run it locally with zero config:
+   directly. No SDK to install; it's an HTTP call with an access token.
+2. Run the [full enterprise scenario](../examples/enterprise_scenario/README.md)
+   to see what the control plane is actually buying you, end to end:
    ```bash
-   make up                                              # gateway + OPA + mock upstream, file registry
-   poetry install --with examples
-   poetry run python -m examples.langgraph_governed_agent.demo
+   brew install opa && poetry install --with examples
+   poetry run python -m examples.enterprise_scenario.scenario
    ```
-   This proves the golden path — an allowed call, a denied call, and the
-   receipt each produces — before touching real infrastructure.
+   Real OIDC identity, real OPA, real RFC 8693 credential brokering, and a real
+   MCP server that refuses the agent's own token — so bypassing the gateway
+   fails. That last point is the one to show a skeptical reviewer.
 3. Register the agent: add an entry to `registry/agents.yaml` (or the
    Postgres-backed table once persistence is on — see journey 3) with the
    tools it's allowed to call. An agent that calls in without a registry entry
@@ -41,10 +42,23 @@ straight at the target system, without rewriting the agent.
    — see journey 2, step 2. Nothing else in the agent's code changes; only the
    `Authorization` header / SPIFFE header does.
 
-**What "day 1 value" looks like:** the LangGraph demo runs with no API keys,
-no external services, and produces a cryptographically chained audit trail
-for both the allowed and denied call — that's the thing to point a skeptical
-teammate at first.
+**What "day 1 value" looks like:** the enterprise scenario runs with no API
+keys and no cloud tenant, yet every signature, policy decision, token exchange,
+and SQL query in it is real — including the demonstration that an agent which
+routes around the gateway cannot reach the data at all.
+
+### What is real vs. simulated
+
+Worth knowing before you show this to anyone who will ask:
+
+| Real | Simulated / not yet real |
+|---|---|
+| OIDC discovery, JWKS, RS256 validation, `aud`/`iss`/`exp` checks | The IdP runs on localhost, not a real Okta org or Entra tenant — though the same adapters are conformance-tested against real Keycloak 26.4, see [keycloak/](../examples/enterprise_scenario/keycloak/README.md) |
+| OPA policy evaluation against `policies/mcp_authz.rego` | — |
+| RFC 8693 token exchange with client authentication | — |
+| MCP JSON-RPC, bearer validation, scope enforcement, SQL over SQLite | Invoice data is seeded fixtures |
+| Ed25519 hash-chained receipts | Signing key is in-process, **not KMS-backed** — see journey 4 |
+| LangGraph agent + graph execution | The model is scripted unless `OAC_SCENARIO_MODEL` is set |
 
 ---
 
@@ -113,11 +127,13 @@ allowed to exist, and what they're allowed to touch.
    the gateway successfully until this exists — that's the zero-orphaned-agents
    guarantee from [ADR-0008](adr/0008-agent-registry-as-declarative-data.md).
 2. **Suspend an agent:** flip `status` to `suspended`. In file mode this is a
-   git-reviewed YAML edit (deliberately — it's an audit trail of its own). In
-   Postgres mode it's a row update; there's **no admin API yet** to do this
-   over HTTP (tracked in [roadmap.md](roadmap.md) critical path item 6) — so
-   today this means direct DB/file access, and the change takes effect within
-   one cache TTL (30s default) if Redis caching is on, immediately otherwise.
+   git-reviewed YAML edit (deliberately — it's an audit trail of its own); the
+   file is re-read when its mtime changes, so a suspension takes effect on the
+   next call without a gateway restart. In Postgres mode it's a row update.
+   There's **no admin API yet** to do either over HTTP (tracked in
+   [roadmap.md](roadmap.md) critical path item 6), so today this means direct
+   DB/file access. With Redis caching on, revocation is visible within one
+   cache TTL (30s default); immediately otherwise.
 3. **Review before merging a registry change:** the registry is the
    authorization boundary, not the policy — a registry entry with
    `granted_tools: [delete_records]` is a real, standing grant regardless of

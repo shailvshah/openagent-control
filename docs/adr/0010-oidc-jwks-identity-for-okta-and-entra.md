@@ -41,9 +41,19 @@ Implementation choices:
   Machine (client-credentials) tokens from both providers identify the calling
   application via `azp`/`appid` (Entra) or `cid` (Okta) — `sub` on those tokens
   is often absent or equal to the client ID. Delegated (user) tokens carry a
-  distinct `sub`; when present and different from the client id, it's surfaced
-  as `AgentIdentity.human_sponsor`, not folded into the workload identity
-  string. The resulting identity is `oidc://{issuer}/{client_id}`.
+  distinct `sub`, surfaced as `AgentIdentity.human_sponsor` rather than folded
+  into the workload identity string. The resulting identity is
+  `oidc://{issuer}/{client_id}`.
+- **"`sub` differs from the client id" is *not* sufficient to infer a human.**
+  This was the original rule and it is wrong: Keycloak issues
+  client-credentials tokens whose `sub` is the service account's UUID, so an
+  autonomous machine call was classified as delegated and rejected for a
+  missing subject token. Detection now uses each provider's documented
+  app-only marker — Okta's `sub == client_id`, Entra's `idtyp: app`, and
+  Keycloak's `service-account-` `preferred_username` prefix. Found by
+  conformance-testing against a real Keycloak realm rather than our own
+  authorization server, which shared the mistaken assumption
+  (`tests/integration/test_keycloak_conformance.py`).
 
 ## Consequences
 - Only one adapter to maintain for both providers; a third OIDC-compliant IdP
@@ -58,3 +68,9 @@ Implementation choices:
 - This is additive to identity modes, not a replacement: `header` and
   `jwt-svid` are unchanged; `identity_mode` selects exactly one at a time
   (ADR-0006 wiring).
+- **App-only detection is a per-provider allowlist, so a fourth IdP with yet
+  another convention will be misclassified until its marker is added.** The
+  failure is safe but disruptive: an autonomous agent gets a 401 demanding a
+  subject token, rather than being silently over-trusted. The conformance
+  suite is the mechanism for catching this — running it against a candidate
+  IdP is the intended first step when onboarding one.

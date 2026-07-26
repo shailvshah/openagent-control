@@ -6,15 +6,30 @@ services:
       - "8000:8000"
     environment:
       - OAC_OPA_URL=http://opa:8181/v1/data/openagent/authz
-      - OAC_MCP_UPSTREAM_URL=http://mcp-server:5678
+      - OAC_MCP_UPSTREAM_URL=http://enterprise-backend:8080
+      # Real OIDC identity + real RFC 8693 credential brokering against the
+      # authorization server in the enterprise-backend service.
+      - OAC_IDENTITY_MODE=oidc-jwks
+      - OAC_OIDC_DISCOVERY_URL=http://enterprise-backend:8090/.well-known/openid-configuration
+      - OAC_OIDC_AUDIENCE=api://openagent-control-gateway
+      - OAC_TOKEN_EXCHANGE_MODE=rfc8693
+      - OAC_TOKEN_EXCHANGE_URL=http://enterprise-backend:8090/oauth2/v1/token
+      - OAC_TOKEN_EXCHANGE_CLIENT_ID=openagent-control-gateway
+      - OAC_TOKEN_EXCHANGE_CLIENT_SECRET=scenario-only-not-a-real-secret
+      - OAC_DELEGATED_AUDIENCE=https://finance-mcp.corp.net
       # Empty by default (in-memory ledger + file registry, ADR-0003/0008).
       # Set on the host and run with --profile persistence to opt into
       # Postgres + Redis (ADR-0009):
       - OAC_DATABASE_URL=${OAC_DATABASE_URL:-}
       - OAC_REDIS_URL=${OAC_REDIS_URL:-}
+    # oidc-jwks mode fetches the discovery document at startup, so the gateway
+    # must not boot before the authorization server is actually serving —
+    # plain depends_on only waits for container start, not readiness.
     depends_on:
-      - opa
-      - mcp-server
+      opa:
+        condition: service_started
+      enterprise-backend:
+        condition: service_healthy
 
   opa:
     image: openpolicyagent/opa:latest
@@ -24,11 +39,46 @@ services:
     volumes:
       - ./policies:/policies
 
-  mcp-server:
-    image: hashicorp/http-echo
-    command: ["-text={\"jsonrpc\": \"2.0\", \"result\": \"mocked_backend_response\"}"]
+  # The downstream system the gateway governs access to: a real MCP JSON-RPC
+  # server over a real SQLite database, plus the authorization server that mints
+  # the short-lived scoped credential it accepts. It validates that credential's
+  # signature, issuer, audience, and scope — so an agent that bypasses the
+  # gateway is refused. See examples/enterprise_scenario/.
+  enterprise-backend:
+    build: .
+    command: python -m examples.enterprise_scenario.serve
+    environment:
+      - OAC_SCENARIO_ISSUER=http://enterprise-backend:8090
     ports:
-      - "8080:5678"
+      - "8080:8080"
+      - "8090:8090"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request;urllib.request.urlopen('http://localhost:8090/keys')"
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Optional: a real, third-party IdP for conformance testing the OIDC and
+  # RFC 8693 adapters against something this repo did not write (see
+  # examples/enterprise_scenario/keycloak/). Not part of the default stack —
+  # the scenario's own authorization server is faster and dependency-free.
+  #
+  #   docker compose --profile keycloak up -d keycloak
+  #   KC_HOME=... examples/enterprise_scenario/keycloak/provision.sh http://localhost:8380
+  #   OAC_TEST_KEYCLOAK_URL=http://localhost:8380/realms/oac poetry run pytest tests/integration/
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.2
+    profiles: ["keycloak"]
+    command: ["start-dev", "--http-port=8380"]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+    ports:
+      - "8380:8380"
 
   # Optional persistence layer (ADR-0009). Not started by plain `docker compose
   # up`; requires `--profile persistence` and OAC_DATABASE_URL/OAC_REDIS_URL set
