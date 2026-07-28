@@ -66,18 +66,43 @@ def update_account(...): ...
 async with streamable_http_client("https://gateway.corp.net/mcp/") as streams: ...
 ```
 
-**3. LangChain / LangGraph** — governed tools that drop into an existing agent.
-Denials come back as tool output, so the model reads "stop and request
-approval" instead of retry-looping.
+**3. LangChain / LangGraph** — governed tools that drop straight into
+`create_agent`. Denials come back as tool *output*, not an exception, so the
+model reads "stop and request approval" and halts instead of retry-looping.
 
 ```python
+from langchain.agents import create_agent
 from openagent_control.sdk.langchain import govern, proxied_tools
 
-tools = [govern(update_account, oac), *proxied_tools(oac)]
+tools = [govern(update_account, oac), *proxied_tools(oac)]  # your fn + MCP-hosted tools
+agent = create_agent(model="anthropic:claude-sonnet-4-6", tools=tools)
 ```
+
+Full working example, real gateway, real denial, real receipt:
+[`examples/langgraph_governed_agent/`](examples/langgraph_governed_agent/README.md).
 
 Whichever you pick, the agent only ever sees the tools its registry record
 grants — no discovering a tool that a call would then be denied for.
+
+## Real identity, no code changes
+
+The agent's `token=` is just its normal OAuth access token — swapping identity
+providers is a config change, not a rewrite:
+
+```bash
+export OAC_IDENTITY_MODE=oidc-jwks
+export OAC_OIDC_DISCOVERY_URL="https://{yourOktaDomain}/oauth2/default/.well-known/oauth-authorization-server"
+export OAC_OIDC_AUDIENCE="api://your-gateway"
+```
+
+Works the same for Entra ID (`https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration`)
+and Keycloak (`.../realms/{realm}/.well-known/openid-configuration`) — the
+gateway fetches the discovery document, caches the JWKS, and validates
+signature, issuer, audience, and expiry on every call
+([ADR-0010](docs/adr/0010-oidc-jwks-identity-for-okta-and-entra.md)).
+Conformance-tested against a real Keycloak realm, not just Okta/Entra's
+published shapes on paper. The default (`OAC_IDENTITY_MODE=header`, no
+verification) is a dev stub — `openagent-control doctor` flags it.
 
 ## Install
 

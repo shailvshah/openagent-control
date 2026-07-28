@@ -77,10 +77,15 @@ Pick the integration shape that matches where your tools live:
 | LangChain / LangGraph agent | `sdk.langchain.govern(...)` / `proxied_tools(oac)` | Your tool list |
 
 ```python
+from langchain.agents import create_agent
 from openagent_control.sdk.langchain import govern, proxied_tools
 
-tools = [govern(update_account, oac), *proxied_tools(oac)]   # drops into create_agent / ToolNode
+tools = [govern(update_account, oac), *proxied_tools(oac)]   # your fn + MCP-hosted tools
+agent = create_agent(model="anthropic:claude-sonnet-4-6", tools=tools)
 ```
+
+Full runnable version — real gateway, a real ALLOW, a real DENY, real
+receipts — in [`examples/langgraph_governed_agent/`](../examples/langgraph_governed_agent/README.md).
 
 Denials come back as tool *output* (`BLOCKED: … Stop execution and request user
 approval.`), so the model reads them and halts instead of retry-looping. An
@@ -117,7 +122,16 @@ target accepts. The SDK is the on-ramp; the proxy is the end state (ADR-0017).
 1. **Real workload identity.** `OAC_IDENTITY_MODE=oidc-jwks` validates real
    Okta/Entra/Keycloak access tokens against published JWKS
    ([ADR-0010](adr/0010-oidc-jwks-identity-for-okta-and-entra.md)); `jwt-svid`
-   for SPIRE. Your agent code changes only its `Authorization` header.
+   for SPIRE. Your agent code changes only its `Authorization` header:
+   ```bash
+   export OAC_IDENTITY_MODE=oidc-jwks
+   export OAC_OIDC_DISCOVERY_URL="https://{yourOktaDomain}/oauth2/default/.well-known/oauth-authorization-server"
+   export OAC_OIDC_AUDIENCE="api://your-gateway"
+   ```
+   Entra: `https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration`.
+   Keycloak: `.../realms/{realm}/.well-known/openid-configuration`. Same three
+   env vars either way — the gateway fetches discovery once at startup, caches
+   the JWKS, and checks signature, issuer, audience, and expiry on every call.
 
 2. **Roll out without blocking anything.** `OAC_DECISION_MODE=observe` records
    and signs what a policy *would* have blocked, with `enforced=false`, and
