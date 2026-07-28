@@ -75,6 +75,7 @@ Pick the integration shape that matches where your tools live:
 | Tool functions live in your agent's own process | `@governed(oac)` | One decorator per tool |
 | Tools already behind an MCP server | Point the MCP client at the gateway | One URL |
 | LangChain / LangGraph agent | `sdk.langchain.govern(...)` / `proxied_tools(oac)` | Your tool list |
+| CrewAI / Strands / Google ADK agent | `@governed(oac)` under/around the framework's own tool decorator | One decorator per tool |
 
 ```python
 from langchain.agents import create_agent
@@ -86,6 +87,11 @@ agent = create_agent(model="anthropic:claude-sonnet-4-6", tools=tools)
 
 Full runnable version — real gateway, a real ALLOW, a real DENY, real
 receipts — in [`examples/langgraph_governed_agent/`](../examples/langgraph_governed_agent/README.md).
+Same, for [CrewAI](../examples/crewai_governed_agent/README.md),
+[Google ADK](../examples/google_adk_governed_agent/README.md), and
+[Strands](../examples/strands_governed_agent/README.md) — `@governed` has no
+LangChain import in it, so it composes with any framework's own tool
+decorator the same way, verified against real installs of each.
 
 Denials come back as tool *output* (`BLOCKED: … Stop execution and request user
 approval.`), so the model reads them and halts instead of retry-looping. An

@@ -52,12 +52,30 @@ not asserted.
 ## Three ways in, pick the one that fits
 
 **1. Decorate what you already have** — your tool code stays put, the gateway
-decides whether it runs. Best for an agent already in production.
+decides whether it runs. **Framework-agnostic**: `@governed` is a plain Python
+decorator (`functools.wraps`, `inspect.signature`) with no LangChain import in
+sight, so it composes with *any* framework's own tool decorator the same way —
+put it on the inside, the framework's schema introspection sees straight
+through it to your original function signature:
 
 ```python
 @governed(oac)
+def update_account(account_id: str, credit_limit: float) -> dict: ...
+
+# then register it the normal way for whichever framework you use:
+@tool                          # CrewAI, Strands — same shape
+@governed(oac)
 def update_account(...): ...
+
+FunctionTool(update_account)   # Google ADK — plain function, no extra decorator
 ```
+
+Verified against real installs of each — CrewAI, Strands, and Google ADK all
+correctly derive the tool's argument schema from the *original* function
+through the wrapper. Runnable examples: [CrewAI](examples/crewai_governed_agent/README.md),
+[Google ADK](examples/google_adk_governed_agent/README.md),
+[Strands](examples/strands_governed_agent/README.md),
+[LangChain/LangGraph](examples/langgraph_governed_agent/README.md).
 
 **2. Point an MCP client at it** — the gateway is a real MCP server
 (Streamable HTTP, handshake, SSE). Change one URL.
@@ -66,9 +84,10 @@ def update_account(...): ...
 async with streamable_http_client("https://gateway.corp.net/mcp/") as streams: ...
 ```
 
-**3. LangChain / LangGraph** — governed tools that drop straight into
-`create_agent`. Denials come back as tool *output*, not an exception, so the
-model reads "stop and request approval" and halts instead of retry-looping.
+**3. LangChain / LangGraph, with a dedicated convenience module** — governed
+tools that drop straight into `create_agent`. Denials come back as tool
+*output*, not an exception, so the model reads "stop and request approval"
+and halts instead of retry-looping.
 
 ```python
 from langchain.agents import create_agent
@@ -117,6 +136,36 @@ openagent-control serve
 
 With no registry configured the gateway starts and **denies every agent** — a
 fresh install trusts nothing until you register something.
+
+## Configuring what's allowed
+
+`init` **copies** a template out of the installed package into `./oac/agents.yaml`
+— a plain file in *your* project, not something you edit inside site-packages.
+The packaged copy (empty, on purpose — nothing pre-trusts an identity you never
+registered) is only ever read, never written to; from here it's yours to edit
+or check into your own config repo, and `OAC_REGISTRY_PATH` just points at it:
+
+```yaml
+agents:
+  - spiffe_id: oidc://https://idp.example.com/realms/prod/invoice-svc
+    display_name: Invoice Service
+    owner: platform-team@example.com
+    risk_tier: medium
+    status: active            # suspended = denied on the next call, no restart
+    granted_tools: [read_query]
+```
+
+Two layers decide what a call may do, and they're not interchangeable:
+
+| | Decides | Can it grant a tool? |
+|---|---|---|
+| **Registry** (`granted_tools`, this file) | *Which* tools an agent may call at all | Yes — this is the allowlist, sufficient on its own |
+| **OPA/Rego policy** (`policies/`, also written by `init`) | Guardrails on an already-granted call — argument thresholds, which user roles may trigger it | No — only *narrows* a grant, never constitutes one |
+
+An agent with no registry entry is refused before Rego is even evaluated.
+Swap the file for `PostgresAgentRegistry` once a second replica or a restart
+matters, and manage entries via the control-plane's `POST/PATCH /api/v1/agents`
+instead of hand-editing yaml ([ADR-0008](docs/adr/0008-agent-registry-as-source-of-truth.md)).
 
 Or `docker compose up` (gateway + OPA only — `--profile persistence` adds
 Postgres/Redis, `--profile demo` adds a mock IdP and MCP upstream). The two
@@ -185,6 +234,13 @@ assumed — and that has caught real bugs here, repeatedly:
 - **Real OPA** caught the default policy denying any tool without a hand-written
   Rego rule — making a registry grant silently insufficient
   ([ADR-0016](docs/adr/0016-multi-upstream-routing-and-listing-projection.md)).
+- **Real installs of CrewAI, Google ADK, and Strands** caught that `pip install
+  openagent-control strands-agents` in one venv is outright unresolvable
+  (`httpx` requirements conflict), and that ADK's true dependency floor
+  (`fastapi>=0.133`) genuinely diverges from this project's own pin — not
+  guessed, verified by trying, then confirmed each framework's own docs still
+  work once the SDK is layered in with `pip install --no-deps` (see each
+  framework example's README).
 
 Integration tests skip when a real dependency is absent rather than substituting
 a fake.
