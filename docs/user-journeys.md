@@ -186,6 +186,23 @@ dashboard is a separate process from the enforcing gateway: it never imports
 only the receipt-signing *public* key — it cannot forge a receipt or bypass
 policy ([ADR-0014](adr/0014-control-plane-api-and-dashboard.md)).
 
+**Two gotchas that produce an empty-looking dashboard, not an error:**
+- The dashboard reads **only** from Postgres. If the gateway is still running
+  the default in-process ledger (no `OAC_DATABASE_URL` on the *gateway*), every
+  call it handles is real and receipted, but invisible here — `fleet/activity`
+  will report `total_calls: 0` forever. Both processes need `OAC_DATABASE_URL`
+  pointed at the same database.
+- A call from an agent that isn't yet in `oac.agents` is refused before OPA is
+  even consulted, so it never shows up as "denied" here either. Register it
+  first — `POST /api/v1/agents` with the same operator bearer token, not a
+  direct database write, so the `oac.operator_actions` audit trail records who
+  added it:
+  ```bash
+  curl -X POST http://localhost:8001/api/v1/agents \
+    -H "Authorization: Bearer $OAC_CONTROL_PLANE_API_KEY" -H "Content-Type: application/json" \
+    -d '{"spiffe_id":"...","display_name":"...","purpose":"...","owner":"...","risk_tier":"medium","granted_tools":["read_query"]}'
+  ```
+
 ### Inventory — every agent, in one place
 
 The **Registered agents** table is the fleet: identity, display name, owner,

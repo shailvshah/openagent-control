@@ -85,6 +85,10 @@ optional = true
 [tool.poetry.group.examples.dependencies]
 langchain = "^1.0.0"
 langgraph = "^1.0.0"
+# Only needed for the opt-in "run it live" path (OAC_SCENARIO_MODEL /
+# OAC_DEMO_MODEL set to an anthropic:* model id) in both LangGraph examples.
+# Both stay fully offline and scripted without it or ANTHROPIC_API_KEY.
+langchain-anthropic = "^1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

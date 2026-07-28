@@ -8,11 +8,22 @@ stops gracefully, asking for human approval. Every decision -- including the den
 
 Run the stack first (gateway :8000, OPA :8181, mock upstream):  make up
 Then:  poetry run python -m examples.langgraph_governed_agent.demo
+
+Model selection:
+  * default -- a deterministic scripted model (ScriptedChatModel), so this runs
+    offline with zero API keys and identical output every time;
+  * set OAC_DEMO_MODEL (e.g. "anthropic:claude-sonnet-4-6") to run the exact
+    same governed tools against a real LLM making its own tool-calling
+    decisions. Needs `poetry install --with examples` (installs
+    langchain-anthropic) and a real `ANTHROPIC_API_KEY` in the environment --
+    read directly by langchain-anthropic, not by this project, so there is
+    nothing here to configure beyond the two environment variables.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from langchain.agents import create_agent
 
@@ -34,8 +45,15 @@ def main() -> None:
     # OAC_IDENTITY_MODE=header on the gateway to use the dev header stub instead.
     agent_token = None if os.environ.get("OAC_USE_HEADER_IDENTITY") else fetch_agent_token(token_url)
 
+    # A model id string here (e.g. "anthropic:claude-sonnet-4-6") is resolved by
+    # LangChain's own init_chat_model, which reads ANTHROPIC_API_KEY from the
+    # environment -- the same "no API key needed unless you opt in" posture
+    # examples/enterprise_scenario/agent.py already uses for OAC_SCENARIO_MODEL.
+    model_id = os.environ.get("OAC_DEMO_MODEL")
+    model: Any = model_id if model_id else scripted_finance_model()
+
     agent = create_agent(
-        model=scripted_finance_model(),
+        model=model,
         tools=demo_tools(gateway_url, agent_token),
         system_prompt="You are invoice-bot, a governed finance agent.",
     )

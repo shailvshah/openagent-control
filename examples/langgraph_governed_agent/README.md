@@ -25,37 +25,127 @@ offline with **zero API keys**.
 
 ## Run it
 
+`make up` (the default `docker-compose.yml` profile) only starts the gateway
+and OPA — no auth server, no MCP upstream. This demo needs the `demo` profile,
+which adds the mock IdP (`:8090`) and the governed MCP server (`:8080`):
+
 ```bash
 poetry install --with examples
-make up                        # gateway :8000, OPA :8181, governed MCP server :8080
+make up-demo                   # gateway :8000, OPA :8181, mock IdP+MCP :8090/:8080
 poetry run python -m examples.langgraph_governed_agent.demo
 docker compose logs gateway | grep audit_receipt   # the signed evidence
 ```
 
-The demo first obtains its own access token via an OAuth 2.0 client-credentials
-grant (`fetch_agent_token`), because `make up` runs the gateway with real OIDC
-identity. `OAC_GATEWAY_URL` and `OAC_TOKEN_URL` override those addresses; set
-`OAC_USE_HEADER_IDENTITY=1` to use the `X-Spiffe-ID` dev stub instead, which
-requires running the gateway with `OAC_IDENTITY_MODE=header`.
-
-The demo agent talks to the gateway over plain HTTP, so it does not know or care
-whether the gateway is backed by the in-process ledger/file registry or by Postgres
-+ Redis (ADR-0009) — same output either way. To prove that end-to-end against real
-persistence instead of `make up`:
+**Two ways to satisfy identity, pick one.** By default the demo calls
+`fetch_agent_token()` and sends a real OAuth bearer token — which the gateway
+can only validate if it is *also* running in `OAC_IDENTITY_MODE=oidc-jwks`,
+pointed at the mock IdP as issuer. `docker-compose.yml`'s own default for the
+`gateway` service is `OAC_IDENTITY_MODE=header`, so the two defaults don't
+match out of the box. Either:
 
 ```bash
-make up-persistent             # + postgres, redis; set OAC_DATABASE_URL/OAC_REDIS_URL
-make db-upgrade                # alembic upgrade head
-# seed the demo agent into oac.agents (see registry/agents.yaml for the fields),
-# then run the demo exactly as above — identical conversation, receipts land in
-# oac.execution_receipts instead of only the gateway's stdout log.
+# (a) simplest — matches the compose default, no OIDC wiring needed
+export OAC_USE_HEADER_IDENTITY=1
+poetry run python -m examples.langgraph_governed_agent.demo
 ```
+
+```bash
+# (b) exercise the real OAuth path — requires recreating the gateway
+# container with matching identity config first
+OAC_IDENTITY_MODE=oidc-jwks \
+OAC_OIDC_DISCOVERY_URL=http://enterprise-backend:8090/.well-known/openid-configuration \
+OAC_OIDC_AUDIENCE=api://openagent-control-gateway \
+docker compose --profile demo up -d --no-deps gateway
+poetry run python -m examples.langgraph_governed_agent.demo
+```
+
+`OAC_GATEWAY_URL` and `OAC_TOKEN_URL` override the demo's default addresses if
+you're not running the standard compose ports.
+
+### Run it against a real model
+
+By default the agent's "reasoning" is a fixed, scripted script (`scripted_model.py`)
+— deterministic output, zero API keys. To have a real model choose its own tool
+calls instead, set `ANTHROPIC_API_KEY` and `OAC_DEMO_MODEL`. Copy the repo's
+[`.env.local.example`](../../.env.local.example) (also covers every other var
+in this walkthrough — identity mode, dashboard persistence) rather than typing
+these by hand; the copy (`.env.local`) is gitignored, so a real key never
+risks getting committed:
+
+```bash
+cp .env.local.example .env.local   # then edit in your real ANTHROPIC_API_KEY
+
+source .venv/bin/activate
+set -a; source .env.local; set +a    # exports every var the file defines
+poetry run python -m examples.langgraph_governed_agent.demo
+```
+
+Same graph, same governed tools, same gateway — only the model differs.
+`OAC_DEMO_MODEL` is read directly by `demo.py`; `ANTHROPIC_API_KEY` is read by
+`langchain-anthropic` itself (installed by `poetry install --with examples`),
+so there is nothing else to configure. Any other `init_chat_model`-supported
+provider string works the same way, with that provider's own API key env var.
+
+A real model won't necessarily reproduce the scripted run's exact phrasing or
+call order — it may fire both tool calls in parallel, for instance — but the
+gateway's ALLOW/DENY outcome per tool is identical either way, since that's
+enforced by the registry and OPA, not by the model.
+
+### Watch it on the dashboard
+
+The dashboard is a **separate process** (`control-plane`, port **8001** — not
+the gateway's 8000) and only reads from **Postgres**, never the gateway's
+in-process ledger. To see this demo's receipts on it:
+
+```bash
+# 1. bring up Postgres/Redis alongside the demo profile
+docker compose --profile persistence --profile demo up -d postgres redis
+
+# 2. create the oac schema
+OAC_DATABASE_URL="postgresql+asyncpg://oac:oac@localhost:5432/oac" \
+  poetry run openagent-control migrate
+
+# 3. start the control plane with a local API key, and repoint the gateway
+#    at Postgres so new receipts land there instead of only in-process
+export OAC_CONTROL_PLANE_API_KEY=$(openssl rand -hex 24)
+OAC_DATABASE_URL="postgresql+asyncpg://oac:oac@postgres:5432/oac" \
+OAC_CONTROL_PLANE_API_KEY="$OAC_CONTROL_PLANE_API_KEY" \
+OAC_CONTROL_PLANE_OPERATOR_AUTH_MODE=api-key \
+  docker compose --profile persistence --profile demo up -d --no-deps gateway control-plane
+
+# 4. register the demo's agent through the real API (not a raw SQL insert —
+#    this is the same endpoint a production operator would use)
+curl -X POST http://localhost:8001/api/v1/agents \
+  -H "Authorization: Bearer $OAC_CONTROL_PLANE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"spiffe_id":"oidc://http://enterprise-backend:8090/finance-invoice-svc",
+       "display_name":"Finance Invoice Service","purpose":"demo",
+       "owner":"you@example.com","risk_tier":"medium","granted_tools":["read_query"]}'
+
+poetry run python -m examples.langgraph_governed_agent.demo   # against the gateway from step 3
+```
+
+Then open `http://localhost:8001/` and sign in with `$OAC_CONTROL_PLANE_API_KEY`.
+
+### Troubleshooting
+
+These are real failures this exact walkthrough produces if a step is skipped
+or run out of order — not hypothetical:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `httpx.ConnectError: Connection refused` fetching the token | `make up` was used instead of `make up-demo` — no mock IdP on `:8090` | `make up-demo` |
+| `GatewayError: ... missing required 'x-spiffe-id' header` | Gateway is in `header` mode but the demo sent a bearer token (or vice versa) | Pick one of the two identity options above and match them |
+| Tool call denied with `Policy engine unavailable; denied (fail-closed)` | Gateway can't reach OPA over the compose network | Check `docker logs <opa container>` — some OPA image versions default to binding `localhost:8181` inside the container, which only the host (not other containers) can reach; needs `--addr :8181` |
+| Dashboard shows `total_calls: 0` after a run | Gateway was still using the in-process ledger, not Postgres | Recreate the gateway with `OAC_DATABASE_URL` set (step 3 above) *before* running the demo |
 
 ## Files
 
 - `demo.py` — builds the agent and prints the governed conversation
 - `governed_tools.py` — the tool factory: any capability name becomes a LangChain
-  tool that calls the gateway's `/mcp/v1` (this is the piece you'd reuse in a real
-  agent)
-- `scripted_model.py` — deterministic stand-in model; swap for
-  `model="anthropic:claude-sonnet-4-6"` in `demo.py` to run it live
+  tool that proxies through the gateway via `openagent_control.sdk.GovernedClient`
+  (this is the piece you'd reuse in a real agent — see
+  [ADR-0017](../../docs/adr/0017-client-sdk-and-authorize-only-endpoint.md) and
+  `openagent_control.sdk.langchain` for the equivalent auto-discovery helper,
+  `proxied_tools()`, when you don't need to reach an ungranted tool by name)
+- `scripted_model.py` — deterministic stand-in model, used unless `OAC_DEMO_MODEL`
+  is set (see "Run it against a real model" above)

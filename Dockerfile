@@ -22,7 +22,12 @@ FROM python:3.11-slim
 # The persistence extra is installed so one image serves both modes; the code
 # lazy-imports that stack, so leaving it unused costs image size, not memory.
 COPY --from=builder /build/dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl'[persistence]' && rm /tmp/*.whl
+# The extras suffix must attach to the glob's *expansion*, not the pattern
+# itself: `/tmp/*.whl'[persistence]'` quotes the brackets so they stop being
+# a glob character class, but that also makes them literal characters the
+# filename itself would have to end with — which no wheel ever does, so the
+# glob silently fails to match and pip reports "not a valid wheel filename".
+RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[persistence]" && rm /tmp/*.whl
 
 # Run unprivileged: the gateway holds the token-exchange client secret and sits
 # in the path to internal systems, so root in the container is not warranted.

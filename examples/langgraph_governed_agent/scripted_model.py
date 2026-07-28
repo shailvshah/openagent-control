@@ -1,8 +1,9 @@
 """A deterministic chat model for offline demos.
 
 Plays back a fixed sequence of AIMessages (including tool calls) so the demo runs
-with zero API keys and identical output every time. Swap for a real model string
-(e.g. "anthropic:claude-sonnet-4-6") in create_agent to run it live.
+with zero API keys and identical output every time. `demo.py` swaps this out for
+a real model string (e.g. "anthropic:claude-sonnet-4-6") automatically when
+OAC_DEMO_MODEL is set -- see that module's docstring.
 """
 
 from __future__ import annotations

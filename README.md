@@ -93,8 +93,12 @@ openagent-control serve
 With no registry configured the gateway starts and **denies every agent** — a
 fresh install trusts nothing until you register something.
 
-Or `docker compose up` (gateway + OPA), `--profile persistence` for
-Postgres/Redis, `--profile demo` for the full walkthrough.
+Or `docker compose up` (gateway + OPA only — `--profile persistence` adds
+Postgres/Redis, `--profile demo` adds a mock IdP and MCP upstream). The two
+profiles compose: the [LangGraph example](examples/langgraph_governed_agent/README.md)
+walks through running with a real model and watching it on the dashboard,
+including the identity-mode mismatch you hit if you mix `make up` with a demo
+that expects `--profile demo`.
 Full guide: **[docs/deployment.md](docs/deployment.md)**.
 
 ## See it work, in one command
