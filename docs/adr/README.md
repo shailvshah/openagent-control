@@ -21,3 +21,4 @@
 | [0017](0017-client-sdk-and-authorize-only-endpoint.md) | A client SDK, and the authorize-only endpoint it needs |
 | [0018](0018-dashboard-as-one-static-file.md) | The dashboard is one static file, not a SPA build |
 | [0019](0019-sponsorship-is-approval-authorization-comes-from-the-user.md) | Sponsorship is approval; authorization comes from the user |
+| [0020](0020-inbound-agent-serving-is-out-of-scope-the-boundary-is-subject-token.md) | Inbound agent-serving is out of scope; the boundary is `subject_token` |

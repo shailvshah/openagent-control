@@ -173,11 +173,21 @@ class GovernedExecutionService:
         # The user's own entitlements, resolved before policy so a rule can
         # reason about them (ADR-0019). Sponsorship is an approval; this is
         # the authorization principal, and only this is verified.
-        if self._subject_verifier is not None and agent.human_sponsor:
+        #
+        # Triggered by the *subject token's presence*, not `agent.human_sponsor`
+        # (ADR-0020): a stable, autonomous agent identity (client_credentials,
+        # no sponsor claim on its own token) serving many end-users still needs
+        # per-request subject verification when boundary 1 attaches a different
+        # human's token to each call — `human_sponsor` being unset on the
+        # agent's own token doesn't mean the call isn't delegated, only that
+        # the agent didn't re-authenticate itself per user. `_bind_subject`
+        # already treats an unset `human_sponsor` as "nothing to bind against"
+        # rather than a mismatch, so this doesn't weaken the binding check.
+        normalized_headers = {k.lower(): v for k, v in headers.items()}
+        subject_token = normalized_headers.get(_SUBJECT_TOKEN_HEADER, "")
+        if self._subject_verifier is not None and subject_token:
             with _tracer.start_as_current_span("verify_subject"):
-                subject = await self._subject_verifier.verify(
-                    {k.lower(): v for k, v in headers.items()}.get(_SUBJECT_TOKEN_HEADER, "")
-                )
+                subject = await self._subject_verifier.verify(subject_token)
                 _bind_subject(agent, subject, self._subject_binding)
                 call.subject = subject
             root_span.set_attribute("subject.id", subject.subject_id)

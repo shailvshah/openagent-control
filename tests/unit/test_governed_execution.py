@@ -22,6 +22,7 @@ from openagent_control.domain.models import (
     PolicyDecision,
     RegisteredAgent,
     RiskTier,
+    SubjectIdentity,
     ToolCallRequest,
 )
 
@@ -38,8 +39,10 @@ class FakePolicyEngine:
     def __init__(self, decision: PolicyDecision | None = None, error: Exception | None = None):
         self._decision = decision
         self._error = error
+        self.received: ToolCallRequest | None = None
 
     async def evaluate(self, request: ToolCallRequest) -> PolicyDecision:
+        self.received = request
         if self._error:
             raise self._error
         assert self._decision is not None
@@ -76,6 +79,20 @@ class FakeTokenExchange:
         return f"obo::{subject_token}::{audience}"
 
 
+class FakeSubjectVerifier:
+    """Records the token it was asked to verify, so a test can assert
+    verification actually ran (rather than only that the end result looked
+    right for reasons that could be coincidental)."""
+
+    def __init__(self, identity: SubjectIdentity) -> None:
+        self._identity = identity
+        self.verified_tokens: list[str] = []
+
+    async def verify(self, subject_token: str) -> SubjectIdentity:
+        self.verified_tokens.append(subject_token)
+        return self._identity
+
+
 def _registered(status: AgentStatus = AgentStatus.ACTIVE) -> RegisteredAgent:
     return RegisteredAgent(
         spiffe_id=_AGENT,
@@ -103,6 +120,8 @@ def _service(
     registry: FakeRegistry | None = None,
     token_exchange: FakeTokenExchange | None = None,
     decision_mode: str = "enforce",
+    subject_verifier: FakeSubjectVerifier | None = None,
+    subject_binding: str = "strict",
 ) -> tuple[GovernedExecutionService, FakeUpstream, RecordingExporter]:
     upstream = upstream or FakeUpstream()
     exporter = exporter or RecordingExporter()
@@ -116,6 +135,8 @@ def _service(
         mcp_upstream=upstream,
         delegated_audience="test-audience",
         decision_mode=decision_mode,  # type: ignore[arg-type]
+        subject_verifier=subject_verifier,
+        subject_binding=subject_binding,  # type: ignore[arg-type]
     )
     return service, upstream, exporter
 
@@ -182,6 +203,50 @@ async def test_delegated_call_without_subject_token_is_rejected_before_upstream(
         await service.execute(headers, _PAYLOAD)
 
     assert upstream.credentials == []
+
+
+@pytest.mark.asyncio
+async def test_subject_verification_runs_without_an_agent_side_sponsor_claim() -> None:
+    """ADR-0020: a stable, autonomous agent identity (no `human_sponsor` on its
+    own token) still gets its caller's subject verified and exposed to policy
+    when a subject token is attached per request. Before this was fixed,
+    verification was gated on `agent.human_sponsor` — which this call
+    deliberately doesn't have — so it silently never ran at all; `call.subject`
+    stayed `None` regardless of a real subject token being present."""
+    identity = SubjectIdentity(
+        subject_id="https://idp.corp.net#dana",
+        issuer="https://idp.corp.net",
+        roles=["finance-approver"],
+    )
+    verifier = FakeSubjectVerifier(identity)
+    policy = FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW))
+    service, _, _ = _service(policy, subject_verifier=verifier, subject_binding="off")
+
+    # No x-human-sponsor at all -- an autonomous agent token, per ADR-0020.
+    headers = {"x-spiffe-id": _AGENT, "x-subject-token": "dana-oidc-token"}
+    await service.execute(headers, _PAYLOAD)
+
+    assert verifier.verified_tokens == ["dana-oidc-token"]
+    assert policy.received is not None
+    assert policy.received.subject is identity
+
+
+@pytest.mark.asyncio
+async def test_subject_verification_is_skipped_with_no_subject_token_at_all() -> None:
+    """The other half of the same fix: a subject verifier being configured
+    must not force every autonomous call (no subject_token at all) through
+    verification -- that would reject ordinary autonomous traffic outright."""
+    verifier = FakeSubjectVerifier(
+        SubjectIdentity(subject_id="x#y", issuer="x", roles=["finance-approver"])
+    )
+    policy = FakePolicyEngine(PolicyDecision(decision=Decision.ALLOW))
+    service, _, _ = _service(policy, subject_verifier=verifier)
+
+    await service.execute({"x-spiffe-id": _AGENT}, _PAYLOAD)
+
+    assert verifier.verified_tokens == []
+    assert policy.received is not None
+    assert policy.received.subject is None
 
 
 @pytest.mark.asyncio
