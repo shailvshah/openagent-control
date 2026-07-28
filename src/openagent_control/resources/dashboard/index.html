@@ -121,7 +121,7 @@
       <h2>Registered agents</h2>
       <div class="scroll"><table id="agent-table">
         <thead><tr><th>Identity</th><th>Name</th><th>Owner</th><th>Risk</th>
-          <th>Granted tools</th><th>Status</th><th></th></tr></thead>
+          <th>Granted tools <span class="muted">(* = approval required)</span></th><th>Status</th><th></th></tr></thead>
         <tbody></tbody>
       </table></div>
     </div>
@@ -226,7 +226,15 @@ async function load() {
         <td>${escapeHtml(agent.display_name)}</td>
         <td>${escapeHtml(agent.owner)}</td>
         <td>${escapeHtml(agent.risk_tier)}</td>
-        <td class="mono">${escapeHtml((agent.granted_tools || []).join(", ")) || "—"}</td>
+        <td class="mono">${escapeHtml(
+          (agent.granted_tools || [])
+            .map((grant) => {
+              const roles = grant.required_roles || [];
+              if (roles.length) return `${grant.name}* (${roles.join("|")})`;
+              return grant.approval_required ? `${grant.name}*` : grant.name;
+            })
+            .join(", ")
+        ) || "—"}</td>
         <td><span class="pill ${suspended ? "deny" : "allow"}">${escapeHtml(agent.status)}</span></td>
         <td><button class="ghost" data-id="${escapeHtml(agent.spiffe_id)}"
              data-action="${suspended ? "activate" : "suspend"}">

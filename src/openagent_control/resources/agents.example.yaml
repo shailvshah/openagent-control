@@ -22,7 +22,20 @@
 #     risk_tier: medium          # low | medium | high
 #     status: active             # active | suspended
 #     granted_tools:
-#       - read_query
+#       - read_query             # plain name: no extra terms
+#       - name: update_record    # object form: per-grant terms (ADR-0021)
+#         required_roles:          # only a human holding one of these roles
+#           - finance-approver     # (from their own verified token, ADR-0019)
+#                                  # may exercise this grant — an autonomous
+#                                  # call, or a delegated call from anyone
+#                                  # else, is denied by
+#                                  # resources/policies/mcp_authz.rego
+#         risk_tier: high          # overrides the agent's own risk_tier for
+#                                  # this one capability (reporting/audit only)
+#       - name: send_notification
+#         approval_required: true  # any verified human is enough here — no
+#                                  # specific role required, just "not
+#                                  # autonomous"
 #
 # `spiffe_id` must match the identity the gateway derives for the caller. For
 # OAC_IDENTITY_MODE=oidc-jwks that is oidc://{issuer}/{client_id} — see

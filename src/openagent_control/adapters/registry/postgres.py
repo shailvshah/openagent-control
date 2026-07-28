@@ -82,7 +82,7 @@ class PostgresAgentRegistry:
                     owner=agent.owner,
                     risk_tier=agent.risk_tier.value,
                     status=agent.status.value,
-                    granted_tools=list(agent.granted_tools),
+                    granted_tools=[grant.model_dump(mode="json") for grant in agent.granted_tools],
                     created_at=agent.created_at,
                     updated_at=agent.updated_at,
                     status_changed_at=agent.status_changed_at,

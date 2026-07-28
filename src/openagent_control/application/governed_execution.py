@@ -347,7 +347,7 @@ def _filter_listing(response: dict[str, Any], call: ToolCallRequest) -> dict[str
     if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
         return response
 
-    granted = set(call.registration.granted_tools) if call.registration else set()
+    granted = set(call.registration.tool_names) if call.registration else set()
     tools = [
         tool for tool in result["tools"] if isinstance(tool, dict) and tool.get("name") in granted
     ]

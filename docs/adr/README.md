@@ -22,3 +22,4 @@
 | [0018](0018-dashboard-as-one-static-file.md) | The dashboard is one static file, not a SPA build |
 | [0019](0019-sponsorship-is-approval-authorization-comes-from-the-user.md) | Sponsorship is approval; authorization comes from the user |
 | [0020](0020-inbound-agent-serving-is-out-of-scope-the-boundary-is-subject-token.md) | Inbound agent-serving is out of scope; the boundary is `subject_token` |
+| [0021](0021-per-grant-metadata-risk-tier-approval-required-roles.md) | Per-grant metadata — risk tier, approval, and required roles on `granted_tools` |

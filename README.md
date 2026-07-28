@@ -152,8 +152,18 @@ agents:
     owner: platform-team@example.com
     risk_tier: medium
     status: active            # suspended = denied on the next call, no restart
-    granted_tools: [read_query]
+    granted_tools:
+      - read_query                     # plain grant: any caller with this identity
+      - name: update_record            # object form: per-grant terms (ADR-0021)
+        required_roles: [finance-approver]  # only a delegated call from a human
+                                             # holding this role (their own verified
+                                             # token, ADR-0019) may trigger it
 ```
+
+One agent, two tools, two different tiers — the shape real deployments need:
+`read_query` is safe for the agent to run on its own; `update_record` isn't
+granted to *anyone* without a specific human behind it. Both rules are enforced
+by the shipped policy, not hand-written per deployment.
 
 Two layers decide what a call may do, and they're not interchangeable:
 

@@ -41,9 +41,18 @@ reason := "Tool arguments exceed authorized thresholds" if {
 	guardrail_violation(input.params.name, input.params.arguments)
 }
 
+# `granted_tools` entries are objects (`{"name": ..., "risk_tier": ...,
+# "approval_required": ...}`, ADR-0021) — a plain string in agents.yaml is
+# normalized to `{"name": "..."}` before it ever reaches OPA, so `t.name` is
+# always present regardless of how the registry entry was written.
 granted(tool) if {
 	some t in input.agent.granted_tools
-	t == tool
+	t.name == tool
+}
+
+grant_for(tool) := t if {
+	some t in input.agent.granted_tools
+	t.name == tool
 }
 
 # --- Argument-level guardrails (authorization logic, stays in policy) ---
@@ -53,6 +62,37 @@ granted(tool) if {
 
 guardrail_violation("salesforce_update_account", args) if {
 	args.credit_limit > 10000
+}
+
+# --- Per-grant approval and role requirements (registry-declared, ADR-0021) ---
+#
+# `approval_required: true` on a grant (set in agents.yaml, not here) means
+# that capability may only be exercised on behalf of a verified human — an
+# autonomous call carrying this grant is denied outright. `required_roles`
+# narrows further, to specific roles on the acting human's own verified token
+# (ADR-0019) — the per-tool RBAC tier a registry entry declares once, instead
+# of every deployment hand-writing the same null-subject/role rule per
+# sensitive tool.
+guardrail_violation(tool, _) if {
+	grant := grant_for(tool)
+	requires_delegation(grant)
+	input.subject == null
+}
+
+guardrail_violation(tool, _) if {
+	grant := grant_for(tool)
+	count(grant.required_roles) > 0
+	input.subject != null
+	not has_any_role(grant.required_roles, input.subject.roles)
+}
+
+requires_delegation(grant) if grant.approval_required
+
+requires_delegation(grant) if count(grant.required_roles) > 0
+
+has_any_role(required, actual) if {
+	some role in required
+	role in actual
 }
 
 # --- The acting user's own entitlements (ADR-0019) ---

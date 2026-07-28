@@ -24,6 +24,7 @@ from openagent_control.domain.models import (
     RiskTier,
     SubjectIdentity,
     ToolCallRequest,
+    ToolGrant,
 )
 
 _AGENT = "spiffe://corp.net/ns/finance/agent/invoice-bot"
@@ -101,7 +102,7 @@ def _registered(status: AgentStatus = AgentStatus.ACTIVE) -> RegisteredAgent:
         owner="alice@corp.net",
         risk_tier=RiskTier.MEDIUM,
         status=status,
-        granted_tools=["read_query"],
+        granted_tools=[ToolGrant(name="read_query")],
     )
 
 

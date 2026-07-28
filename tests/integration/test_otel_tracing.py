@@ -38,6 +38,7 @@ from openagent_control.domain.models import (
     RegisteredAgent,
     RiskTier,
     ToolCallRequest,
+    ToolGrant,
 )
 from openagent_control.tracing import configure_tracing
 
@@ -69,7 +70,7 @@ class _FakeRegistry:
             owner="alice@corp.net",
             risk_tier=RiskTier.MEDIUM,
             status=AgentStatus.ACTIVE,
-            granted_tools=["read_query"],
+            granted_tools=[ToolGrant(name="read_query")],
         )
 
 

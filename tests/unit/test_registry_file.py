@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from openagent_control.adapters.registry.file import FileAgentRegistry
-from openagent_control.domain.models import AgentStatus, RiskTier
+from openagent_control.domain.models import AgentStatus, RiskTier, ToolGrant
 
 _YAML = """
 agents:
@@ -16,7 +16,11 @@ agents:
     owner: alice@corp.net
     risk_tier: medium
     status: active
-    granted_tools: [read_query]
+    granted_tools:
+      - read_query
+      - name: update_record
+        required_roles: [finance-approver]
+        risk_tier: high
   - spiffe_id: spiffe://corp.net/ns/x/agent/retired-bot
     display_name: Retired Bot
     purpose: demo
@@ -41,7 +45,20 @@ async def test_lookup_returns_registered_agent(registry: FileAgentRegistry) -> N
     assert agent is not None
     assert agent.owner == "alice@corp.net"
     assert agent.risk_tier is RiskTier.MEDIUM
-    assert agent.granted_tools == ["read_query"]
+    assert agent.tool_names == ["read_query", "update_record"]
+
+
+@pytest.mark.asyncio
+async def test_plain_string_and_object_grants_both_parse(registry: FileAgentRegistry) -> None:
+    """A bare tool name and a per-grant object may coexist in the same list —
+    see ADR-0021's backward-compatibility guarantee."""
+    agent = await registry.lookup("spiffe://corp.net/ns/finance/agent/invoice-bot")
+
+    assert agent is not None
+    assert agent.granted_tools[0] == ToolGrant(name="read_query")
+    assert agent.granted_tools[1] == ToolGrant(
+        name="update_record", required_roles=["finance-approver"], risk_tier=RiskTier.HIGH
+    )
 
 
 @pytest.mark.asyncio

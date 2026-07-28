@@ -106,7 +106,10 @@ its registry grant alone, and the guardrails only ever narrow that grant.
 - Registry grants are now sufficient on their own, which is the point — but it
   means an operator who adds a tool to `granted_tools` has authorized it, with
   no second gate. That is the intended reading of ADR-0008, and it raises the
-  stakes on registry review; it is not a change to make quietly.
+  stakes on registry review; it is not a change to make quietly. ADR-0021 adds
+  per-grant terms (`approval_required`, `required_roles`) for the operator who
+  wants a *narrower* gate than "granted means allowed" for one specific tool,
+  without touching this rule.
 - Not addressed here: per-upstream credentials. Every upstream in a fleet
   currently receives a credential brokered for the one `delegated_audience`,
   which suits a fleet sharing a resource audience and not a fleet where each

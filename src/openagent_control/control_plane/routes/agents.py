@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from openagent_control.control_plane.auth import get_operator_subject
 from openagent_control.control_plane.dependencies import ControlPlaneContainer, get_container
 from openagent_control.domain.errors import AgentNotFoundError
-from openagent_control.domain.models import AgentPatch, AgentStatus, RegisteredAgent, RiskTier
+from openagent_control.domain.models import (
+    AgentPatch,
+    AgentStatus,
+    RegisteredAgent,
+    RiskTier,
+    ToolGrant,
+    normalize_tool_grants,
+)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
@@ -24,7 +31,12 @@ class CreateAgentRequest(BaseModel):
     purpose: str
     owner: str
     risk_tier: RiskTier
-    granted_tools: list[str] = Field(default_factory=list)
+    granted_tools: list[ToolGrant] = Field(default_factory=list)
+
+    @field_validator("granted_tools", mode="before")
+    @classmethod
+    def _normalize_grants(cls, value: Any) -> Any:
+        return normalize_tool_grants(value)
 
 
 @router.get("")

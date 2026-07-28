@@ -11,7 +11,13 @@ from openagent_control.adapters.db.session import make_engine, make_session_fact
 from openagent_control.adapters.db.tables import AgentRow, Base, OperatorActionRow
 from openagent_control.adapters.registry.postgres import PostgresAgentRegistry
 from openagent_control.domain.errors import AgentNotFoundError
-from openagent_control.domain.models import AgentPatch, AgentStatus, RegisteredAgent, RiskTier
+from openagent_control.domain.models import (
+    AgentPatch,
+    AgentStatus,
+    RegisteredAgent,
+    RiskTier,
+    ToolGrant,
+)
 
 
 @pytest.fixture
@@ -50,7 +56,7 @@ async def test_lookup_returns_registered_agent(
     assert agent.owner == "alice@corp.net"
     assert agent.risk_tier is RiskTier.MEDIUM
     assert agent.status is AgentStatus.ACTIVE
-    assert agent.granted_tools == ["read_query"]
+    assert agent.tool_names == ["read_query"]
 
 
 @pytest.mark.asyncio
@@ -98,7 +104,7 @@ def _new_agent(spiffe_id: str = "spiffe://corp.net/ns/finance/agent/new-bot") ->
         purpose="demo",
         owner="alice@corp.net",
         risk_tier=RiskTier.LOW,
-        granted_tools=["read_query"],
+        granted_tools=[ToolGrant(name="read_query")],
     )
 
 
@@ -167,7 +173,7 @@ async def test_update_patches_only_provided_fields_and_audits(
             owner="bob@corp.net",
             risk_tier=RiskTier.HIGH,
             purpose="updated purpose",
-            granted_tools=["read_query", "write_query"],
+            granted_tools=[ToolGrant(name="read_query"), ToolGrant(name="write_query")],
         ),
         operator_subject="bob@corp.net",
     )
@@ -175,7 +181,7 @@ async def test_update_patches_only_provided_fields_and_audits(
     assert updated.owner == "bob@corp.net"
     assert updated.risk_tier is RiskTier.HIGH
     assert updated.purpose == "updated purpose"
-    assert updated.granted_tools == ["read_query", "write_query"]
+    assert updated.tool_names == ["read_query", "write_query"]
     assert updated.display_name == agent.display_name  # untouched field preserved
     assert updated.updated_at > agent.updated_at
 

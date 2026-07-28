@@ -3,6 +3,18 @@
 # Every agent that may call through the gateway MUST have a record here —
 # unregistered SPIFFE IDs are denied and the attempt is receipted in the audit
 # ledger. Register/suspend/re-scope agents via PR to this file.
+#
+# granted_tools entries (ADR-0021) may be a plain tool name, or an object
+# carrying per-grant terms:
+#
+#   granted_tools:
+#     - read_query                    # plain grant: no extra terms
+#     - name: update_record
+#       approval_required: true       # only callable on behalf of a verified
+#                                      # human (input.subject != null) — see
+#                                      # resources/policies/mcp_authz.rego
+#       risk_tier: high                # overrides the agent's own risk_tier
+#                                      # for this one capability, for reporting
 
 agents:
   - spiffe_id: spiffe://corp.net/ns/finance/agent/invoice-bot

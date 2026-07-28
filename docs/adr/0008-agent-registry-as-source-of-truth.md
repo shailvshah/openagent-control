@@ -35,6 +35,9 @@ Introduce an `AgentRegistry` port and a `RegisteredAgent` domain model
   authorization logic, not agent facts.
 
 ## Consequences
+- **`granted_tools` entries later grew per-grant metadata** (risk tier override,
+  approval requirement, required roles) without changing this decision — see
+  ADR-0021. A plain tool name is still a complete, valid grant.
 - Registering, suspending, or re-scoping an agent is now a data change
   (`registry/agents.yaml`), not a Rego change; policy code stops growing per agent.
 - The registry lookup adds one async call per request; `FileAgentRegistry` caches

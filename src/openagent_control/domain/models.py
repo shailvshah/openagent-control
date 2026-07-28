@@ -9,7 +9,21 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def normalize_tool_grants(value: Any) -> Any:
+    """Accepts a mix of plain tool-name strings and grant objects/dicts, e.g.
+
+        granted_tools:
+          - read_query                          # plain string: no extra terms
+          - name: update_record                 # object: per-grant terms
+            approval_required: true
+
+    so an existing registry file needs no migration to keep working."""
+    if not isinstance(value, list):
+        return value
+    return [{"name": entry} if isinstance(entry, str) else entry for entry in value]
 
 
 class AgentIdentity(BaseModel):
@@ -81,6 +95,50 @@ class RiskTier(str, Enum):
     HIGH = "high"
 
 
+class ToolGrant(BaseModel):
+    """One entitlement in an agent's `granted_tools` list — the allowlist
+    ADR-0008 makes the source of truth, with per-tool terms attached instead
+    of a bare name. Enterprises tier access per capability, not just per
+    agent: `read_query` and `update_record` on the same agent rarely warrant
+    the same scrutiny.
+
+    A plain string (`- read_query`) in YAML still works — `RegisteredAgent`
+    normalizes it to `ToolGrant(name="read_query")`, i.e. the grant exists
+    with no extra terms. This is deliberately additive: every registry file
+    written before this field existed still parses unchanged.
+    """
+
+    name: str
+    risk_tier: RiskTier | None = None
+    """Overrides the agent's own `risk_tier` for this one capability, when a
+    tool is riskier or safer than the agent's overall tier suggests. `None`
+    means "use the agent's tier" — set only to override."""
+    approval_required: bool = False
+    """When true, this grant may only be exercised on behalf of a verified
+    human, never autonomously: the default policy
+    (`resources/policies/mcp_authz.rego`) denies any call using this grant
+    while `input.subject` is null, regardless of the agent's own registry
+    status. Enforced in policy, not just descriptive — see ADR-0021."""
+    required_roles: list[str] = Field(default_factory=list)
+    """Narrows `approval_required` from "any verified human" to "a human
+    holding one of these roles" — the RBAC-per-capability shape enterprises
+    actually run (an analyst may `read_query`; only a finance approver may
+    `update_record`). A non-empty list implies delegation is required, the
+    same as `approval_required=True`, and additionally denies a subject whose
+    verified `roles` (ADR-0019) don't intersect this list. Role *names* are
+    whatever the enterprise's IdP calls them (Okta group name, Entra app
+    role, Keycloak realm role) — this project doesn't invent a vocabulary,
+    it only compares strings. Enforced in
+    `resources/policies/mcp_authz.rego`."""
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("granted_tools entry must name a tool")
+        return value
+
+
 class RegisteredAgent(BaseModel):
     """An agent's registry record: the facts the enterprise holds about it.
 
@@ -96,13 +154,24 @@ class RegisteredAgent(BaseModel):
     owner: str
     risk_tier: RiskTier
     status: AgentStatus = AgentStatus.ACTIVE
-    granted_tools: list[str] = Field(default_factory=list)
+    granted_tools: list[ToolGrant] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     status_changed_at: datetime | None = None
     """When `status` last changed — e.g. when an agent was suspended. Distinct
     from `updated_at` (any field change) so compliance reporting and a future
     kill-switch feature can answer "when was this agent revoked" precisely."""
+
+    @field_validator("granted_tools", mode="before")
+    @classmethod
+    def _normalize_grants(cls, value: Any) -> Any:
+        return normalize_tool_grants(value)
+
+    @property
+    def tool_names(self) -> list[str]:
+        """Flat tool names, for callers that only need membership (e.g. the
+        `tools/list` projection in `governed_execution._filter_listing`)."""
+        return [grant.name for grant in self.granted_tools]
 
 
 class ToolCallRequest(BaseModel):
@@ -184,7 +253,12 @@ class AgentPatch(BaseModel):
     purpose: str | None = None
     owner: str | None = None
     risk_tier: RiskTier | None = None
-    granted_tools: list[str] | None = None
+    granted_tools: list[ToolGrant] | None = None
+
+    @field_validator("granted_tools", mode="before")
+    @classmethod
+    def _normalize_grants(cls, value: Any) -> Any:
+        return normalize_tool_grants(value)
 
 
 class ChainVerificationResult(BaseModel):

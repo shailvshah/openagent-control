@@ -74,7 +74,7 @@ allow if {
 
 granted(tool) if {
 	some t in input.agent.granted_tools
-	t == tool
+	t.name == tool
 }
 
 reason := "Capability not granted for this agent identity" if {

@@ -18,6 +18,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from examples.enterprise_scenario.harness import free_port, wait_for
@@ -62,7 +63,7 @@ allow if {
 
 granted(tool) if {
 	some t in input.agent.granted_tools
-	t == tool
+	t.name == tool
 }
 
 reason := "Capability not granted for this agent identity" if {
@@ -111,7 +112,7 @@ def opa_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         process.wait(timeout=10)
 
 
-def _registration(tools: list[str]) -> RegisteredAgent:
+def _registration(tools: list[Any]) -> RegisteredAgent:
     return RegisteredAgent(
         spiffe_id=f"oidc://{_ISSUER}/invoice-bot",
         display_name="Invoice Bot",
@@ -127,7 +128,7 @@ async def _decide(
     tool: str,
     *,
     subject: SubjectIdentity | None,
-    granted: list[str],
+    granted: list[Any],
 ) -> PolicyDecision:
     engine = OPAPolicyEngine(opa_url=opa_url)
     try:

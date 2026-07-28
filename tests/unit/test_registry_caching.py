@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from openagent_control.adapters.registry.caching import CachingAgentRegistry
-from openagent_control.domain.models import AgentStatus, RegisteredAgent, RiskTier
+from openagent_control.domain.models import AgentStatus, RegisteredAgent, RiskTier, ToolGrant
 
 _AGENT_ID = "spiffe://corp.net/ns/finance/agent/invoice-bot"
 
@@ -45,7 +45,7 @@ def _agent() -> RegisteredAgent:
         owner="alice@corp.net",
         risk_tier=RiskTier.MEDIUM,
         status=AgentStatus.ACTIVE,
-        granted_tools=["read_query"],
+        granted_tools=[ToolGrant(name="read_query")],
     )
 
 

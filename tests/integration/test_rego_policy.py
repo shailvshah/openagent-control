@@ -22,6 +22,7 @@ from openagent_control.domain.models import (
     PolicyDecision,
     RegisteredAgent,
     RiskTier,
+    SubjectIdentity,
     ToolCallRequest,
 )
 
@@ -39,7 +40,12 @@ def opa_url() -> Iterator[str]:
 
 
 async def _decide(
-    opa_url: str, method: str, tool: str | None, arguments: dict[str, Any], granted: list[str]
+    opa_url: str,
+    method: str,
+    tool: str | None,
+    arguments: dict[str, Any],
+    granted: list[Any],
+    subject: SubjectIdentity | None = None,
 ) -> PolicyDecision:
     engine = OPAPolicyEngine(opa_url=opa_url)
     try:
@@ -57,6 +63,7 @@ async def _decide(
                     risk_tier=RiskTier.LOW,
                     granted_tools=granted,
                 ),
+                subject=subject,
             )
         )
     finally:
@@ -131,6 +138,68 @@ async def test_a_guarded_tool_called_with_no_arguments_is_allowed(opa_url: str) 
         "salesforce_update_account",
         {},
         granted=["salesforce_update_account"],
+    )
+
+    assert decision.decision is Decision.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_approval_required_grant_denies_an_autonomous_call(opa_url: str) -> None:
+    """ADR-0021: `approval_required: true` on a grant is enforced by the
+    shipped policy itself, not left to every deployment to hand-write."""
+    decision = await _decide(
+        opa_url,
+        "tools/call",
+        "lookup_account",
+        {},
+        granted=[{"name": "lookup_account", "approval_required": True}],
+        subject=None,
+    )
+
+    assert decision.decision is Decision.DENY
+
+
+@pytest.mark.asyncio
+async def test_approval_required_grant_allows_any_verified_human(opa_url: str) -> None:
+    decision = await _decide(
+        opa_url,
+        "tools/call",
+        "lookup_account",
+        {},
+        granted=[{"name": "lookup_account", "approval_required": True}],
+        subject=SubjectIdentity(subject_id="https://idp/corp#dana", issuer="https://idp/corp"),
+    )
+
+    assert decision.decision is Decision.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_required_roles_denies_a_human_without_the_role(opa_url: str) -> None:
+    decision = await _decide(
+        opa_url,
+        "tools/call",
+        "salesforce_update_account",
+        {},
+        granted=[{"name": "salesforce_update_account", "required_roles": ["sales-manager"]}],
+        subject=SubjectIdentity(
+            subject_id="https://idp/corp#intern", issuer="https://idp/corp", roles=["read-only"]
+        ),
+    )
+
+    assert decision.decision is Decision.DENY
+
+
+@pytest.mark.asyncio
+async def test_required_roles_allows_a_human_with_the_role(opa_url: str) -> None:
+    decision = await _decide(
+        opa_url,
+        "tools/call",
+        "salesforce_update_account",
+        {},
+        granted=[{"name": "salesforce_update_account", "required_roles": ["sales-manager"]}],
+        subject=SubjectIdentity(
+            subject_id="https://idp/corp#bob", issuer="https://idp/corp", roles=["sales-manager"]
+        ),
     )
 
     assert decision.decision is Decision.ALLOW

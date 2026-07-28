@@ -5,7 +5,7 @@ import pytest
 
 from openagent_control.adapters.policy.opa import OPAPolicyEngine
 from openagent_control.domain.errors import PolicyEngineUnavailableError
-from openagent_control.domain.models import AgentIdentity, Decision, ToolCallRequest
+from openagent_control.domain.models import AgentIdentity, Decision, ToolCallRequest, ToolGrant
 
 
 def _call() -> ToolCallRequest:
@@ -74,13 +74,13 @@ async def test_registry_facts_are_included_in_opa_input() -> None:
         purpose="demo",
         owner="alice@corp.net",
         risk_tier=RiskTier.MEDIUM,
-        granted_tools=["read_query"],
+        granted_tools=[ToolGrant(name="read_query")],
     )
 
     await engine.evaluate(call)
 
     agent_facts = seen["input"]["agent"]  # type: ignore[index]
-    assert agent_facts["granted_tools"] == ["read_query"]
+    assert [t["name"] for t in agent_facts["granted_tools"]] == ["read_query"]
     assert agent_facts["status"] == "active"
 
 

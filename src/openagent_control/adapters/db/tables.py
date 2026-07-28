@@ -8,6 +8,7 @@ these tables against whatever database the operator points `database_url` at.
 from __future__ import annotations
 
 import datetime
+from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, Integer, MetaData, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -35,7 +36,10 @@ class AgentRow(Base):
     owner: Mapped[str] = mapped_column(String, nullable=False)
     risk_tier: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
-    granted_tools: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    granted_tools: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    """Each element is a `ToolGrant` dict (`{"name": ..., ...}`, ADR-0021) once
+    written by this codebase; a legacy row may still hold a plain string until
+    next updated — `RegisteredAgent`'s validator normalizes either shape."""
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status_changed_at: Mapped[datetime.datetime | None] = mapped_column(

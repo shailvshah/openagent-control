@@ -115,6 +115,21 @@ guardrails only *narrow* it, never constitute it
 agent's `tools/list` is filtered to exactly these, so it never discovers a tool
 a call would then be denied for.
 
+A grant can also carry its own terms, for the tools that don't warrant the
+agent's blanket access — `update_record` needs a real approver behind it,
+`read_query` doesn't:
+
+```yaml
+granted_tools:
+  - read_query
+  - name: update_record
+    required_roles: [finance-approver]  # only a delegated call from a human
+                                         # holding this role may trigger it
+```
+
+Enforced by the shipped policy itself, no extra Rego required
+([ADR-0021](adr/0021-per-grant-metadata-risk-tier-approval-required-roles.md)).
+
 **Know what this shape does and does not buy you.** `@governed` gives identity,
 policy and audit — but the agent runs the tool with the credential it already
 holds, so it *could* bypass the SDK and call the target directly. The proxy
